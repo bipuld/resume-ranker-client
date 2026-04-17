@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" fill="none">
+  <defs>
+    <linearGradient id="atsGrad" x1="16" y1="12" x2="112" y2="116" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0F766E" />
+      <stop offset="1" stop-color="#115E59" />
+    </linearGradient>
+    <linearGradient id="atsWarm" x1="24" y1="20" x2="104" y2="96" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F59E0B" />
+      <stop offset="1" stop-color="#B45309" />
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="112" height="112" rx="30" fill="url(#atsGrad)"/>
+  <rect x="22" y="24" width="84" height="80" rx="14" fill="#F8FAFC" fill-opacity="0.98"/>
+  <path d="M35 86L50 42H60L75 86H65L61.5 75.5H48.5L45 86H35ZM51.5 66H58.5L55 54.5L51.5 66Z" fill="#0F766E"/>
+  <path d="M76 48.5H102V57H89V86H79V57H76V48.5Z" fill="url(#atsWarm)"/>
+  <circle cx="94" cy="35" r="5" fill="#F59E0B"/>
+</svg>
