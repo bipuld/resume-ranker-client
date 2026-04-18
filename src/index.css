@@ -66,6 +66,75 @@ body {
   margin: 0;
 }
 
+.theme-toggle {
+  position: fixed;
+  top: 0.9rem;
+  right: 0.9rem;
+  z-index: 60;
+  border: 1px solid rgba(120, 129, 155, 0.35);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.86);
+  color: #0f172a;
+  font: 700 0.68rem/1 var(--mono);
+  letter-spacing: 0.02em;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  padding: 0.32rem 0.4rem;
+  backdrop-filter: blur(8px);
+}
+
+.theme-option {
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  border-radius: 999px;
+  width: 1.72rem;
+  height: 1.72rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.theme-option:hover {
+  background: rgba(15, 23, 42, 0.07);
+}
+
+.theme-option.active {
+  border-color: rgba(15, 23, 42, 0.2);
+  background: rgba(15, 23, 42, 0.1);
+}
+
+.theme-label {
+  font: 700 0.62rem/1 var(--mono);
+  letter-spacing: 0.01em;
+  opacity: 0.9;
+  padding-right: 0.22rem;
+}
+
+:root[data-theme="dark"] .theme-toggle {
+  border-color: rgba(148, 163, 184, 0.35);
+  background: rgba(17, 24, 39, 0.9);
+  color: #f8fafc;
+}
+
+:root[data-theme="dark"] .theme-option:hover {
+  background: rgba(248, 250, 252, 0.1);
+}
+
+:root[data-theme="dark"] .theme-option.active {
+  border-color: rgba(248, 250, 252, 0.25);
+  background: rgba(248, 250, 252, 0.14);
+}
+
+@media (max-width: 640px) {
+  .theme-toggle {
+    top: 0.7rem;
+    right: 0.7rem;
+  }
+}
+
 h1,
 h2 {
   font-family: var(--heading);

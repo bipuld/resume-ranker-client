@@ -2,6 +2,10 @@ export interface LoginPayload {
   email: string;
   password: string;
   fcm_token: string;
+  device_type: string;
+  device_name: string;
+  device_id: string;
+  role?: "candidate" | "recruiter" | "admin";
 }
 
 export interface RegisterPayload {
@@ -19,6 +23,7 @@ export interface SignupPayload {
   last_name: string;
   phone: string;
   full_name: string;
+  role: string;  // Hidden field - automatically sent as 'candidate'
 }
 
 export interface OtpVerifyPayload {

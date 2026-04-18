@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   changePassword,
   loginUser,
@@ -7,11 +8,19 @@ import {
   signupUser,
   verifyLoginOtp,
 } from "../api/auth";
-import { getOrCreateDeviceToken, saveAuthSession } from "../utils/authSession";
+import ThemeToggle from "../components/ThemeToggle";
+import { ROUTES } from "../routes/paths";
+import { getOrCreateDeviceToken, saveAuthRole, saveAuthSession } from "../utils/authSession";
 import atsIcon from "../assets/ats-icon.svg";
 import "./Login.css";
 
 type AuthMode = "login" | "signup" | "otp" | "reset" | "change";
+type LoginRole = "candidate" | "recruiter" | "admin";
+
+type LoginProps = {
+  defaultLoginRole?: LoginRole;
+  lockLoginRole?: boolean;
+};
 
 const OTP_DURATION_SECONDS = 60;
 
@@ -63,6 +72,17 @@ const isStrongPassword = (value: string) => {
   return hasUpper && hasLower && hasNumber && hasSpecial && hasLength;
 };
 
+const getDeviceType = () => {
+  const userAgent = navigator.userAgent.toLowerCase();
+  return /android|iphone|ipad|ipod|mobile/i.test(userAgent) ? "mobile" : "web";
+};
+
+const getDeviceName = () => {
+  const platform = navigator.platform || "unknown-platform";
+  const language = navigator.language || "unknown-language";
+  return `${platform}-${language}`;
+};
+
 
 const modeContent: Record<AuthMode, { title: string; help: string; actionLabel: string }> = {
   login: {
@@ -92,10 +112,23 @@ const modeContent: Record<AuthMode, { title: string; help: string; actionLabel: 
   },
 };
 
-export default function Login() {
+export default function Login({
+  defaultLoginRole = "candidate",
+  lockLoginRole = false,
+}: LoginProps) {
+  const navigate = useNavigate();
   const [mode, setMode] = useState<AuthMode>("login");
+  const [loginRole, setLoginRole] = useState<LoginRole>(defaultLoginRole);
+
+  useEffect(() => {
+    if (lockLoginRole) {
+      setLoginRole(defaultLoginRole);
+    }
+  }, [defaultLoginRole, lockLoginRole]);
 
   const deviceToken = useMemo(() => getOrCreateDeviceToken(), []);
+  const deviceType = useMemo(() => getDeviceType(), []);
+  const deviceName = useMemo(() => getDeviceName(), []);
   const [form, setForm] = useState({
     email: "",
     password: "",
@@ -159,9 +192,21 @@ export default function Login() {
         email: form.email.trim().toLowerCase(),
         password: form.password,
         fcm_token: deviceToken,
+        device_type: deviceType,
+        device_name: deviceName,
+        device_id: deviceToken,
+        role: lockLoginRole ? defaultLoginRole : loginRole,
       });
 
+      const resolvedRole = lockLoginRole ? defaultLoginRole : loginRole;
       saveAuthSession(res);
+      saveAuthRole(resolvedRole);
+
+      if (resolvedRole === "admin") {
+        navigate(ROUTES.dashboard.admin);
+        return;
+      }
+
       setSuccess(res.message || "Login successful.");
     } catch (err: unknown) {
       const loginError = getErrorMessage(err, "Login failed. Please check your email and password.");
@@ -211,6 +256,7 @@ export default function Login() {
         last_name: signupForm.last_name.trim(),
         phone: signupForm.phone.trim(),
         full_name: fullName,
+        role: 'candidate',  // Hidden value - automatically sent as 'candidate'
       });
 
       const signupEmail = signupForm.email.trim().toLowerCase();
@@ -371,6 +417,7 @@ export default function Login() {
 
   return (
     <main className="login-shell">
+      <ThemeToggle />
       <div className="bg-shape shape-left" aria-hidden="true" />
       <div className="bg-shape shape-right" aria-hidden="true" />
       <div className="bg-grid" aria-hidden="true" />
@@ -387,8 +434,20 @@ export default function Login() {
           {/* <span className="status-pill">Secure</span> */}
         </header>
 
-        <h1 id="login-title">{modeContent[mode].title}</h1>
-        <p className="subtitle">{modeContent[mode].help}</p>
+        <h1 id="login-title">
+          {mode === "login" && loginRole === "admin"
+            ? "Admin Panel Login"
+            : mode === "login" && loginRole === "recruiter"
+              ? "Recruiter Login"
+              : modeContent[mode].title}
+        </h1>
+        <p className="subtitle">
+          {mode === "login" && loginRole === "admin"
+            ? "Sign in with your administrator account to access the admin panel."
+            : mode === "login" && loginRole === "recruiter"
+              ? "Sign in with your recruiter account to manage jobs and applicants."
+            : modeContent[mode].help}
+        </p>
 
         <div className="feedback-zone" aria-live="polite">
           {error && <p className="feedback error">{error}</p>}
@@ -397,6 +456,37 @@ export default function Login() {
 
         {mode === "login" && (
           <form className="login-form" onSubmit={handleLogin}>
+            {!lockLoginRole && (
+              <div className="role-switch" role="tablist" aria-label="Select login access">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={loginRole === "candidate"}
+                  className={`role-chip ${loginRole === "candidate" ? "active" : ""}`}
+                  onClick={() => setLoginRole("candidate")}
+                >
+                  Candidate Login
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={loginRole === "admin"}
+                  className={`role-chip ${loginRole === "admin" ? "active" : ""}`}
+                  onClick={() => setLoginRole("admin")}
+                >
+                  Admin Panel Login
+                </button>
+              </div>
+            )}
+
+            {loginRole === "admin" && (
+              <p className="hint-text">Admin access is restricted to authorized admin accounts only.</p>
+            )}
+
+            {loginRole === "recruiter" && (
+              <p className="hint-text">Recruiter access is restricted to recruiter accounts only.</p>
+            )}
+
             <label htmlFor="email">Email</label>
             <input
               id="email"
@@ -431,23 +521,26 @@ export default function Login() {
             </label>
 
             <input type="hidden" value={deviceToken} readOnly aria-hidden="true" />
+            <input type="hidden" value={loginRole} readOnly aria-hidden="true" />
 
             <button type="submit" disabled={isLoading}>
               {isLoading ? "Signing in..." : modeContent.login.actionLabel}
             </button>
 
             <div className="inline-actions">
-              <button
-                type="button"
-                className="text-action"
-                onClick={() => {
-                  setMode("signup");
-                  setError("");
-                  setSuccess("");
-                }}
-              >
-                Create account
-              </button>
+              {loginRole === "candidate" && (
+                <button
+                  type="button"
+                  className="text-action"
+                  onClick={() => {
+                    setMode("signup");
+                    setError("");
+                    setSuccess("");
+                  }}
+                >
+                  Create account
+                </button>
+              )}
               <button
                 type="button"
                 className="text-action"

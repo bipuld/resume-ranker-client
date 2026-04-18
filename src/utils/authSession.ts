@@ -1,10 +1,17 @@
 const ACCESS_TOKEN_KEY = "ats.auth.access";
 const REFRESH_TOKEN_KEY = "ats.auth.refresh";
 const DEVICE_TOKEN_KEY = "ats.device.token";
+const ROLE_KEY = "ats.auth.role";
 
 export const getAccessToken = () => localStorage.getItem(ACCESS_TOKEN_KEY);
 
 export const getRefreshToken = () => localStorage.getItem(REFRESH_TOKEN_KEY);
+
+export const getAuthRole = () => localStorage.getItem(ROLE_KEY);
+
+export const saveAuthRole = (role: "candidate" | "recruiter" | "admin") => {
+  localStorage.setItem(ROLE_KEY, role);
+};
 
 export const saveAuthSession = (payload: {
   access?: string;
@@ -24,6 +31,7 @@ export const saveAuthSession = (payload: {
 export const clearAuthSession = () => {
   localStorage.removeItem(ACCESS_TOKEN_KEY);
   localStorage.removeItem(REFRESH_TOKEN_KEY);
+  localStorage.removeItem(ROLE_KEY);
 };
 
 export const getOrCreateDeviceToken = () => {

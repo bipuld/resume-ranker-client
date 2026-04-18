@@ -14,6 +14,20 @@
   --success: #047857;
 }
 
+:root[data-theme="dark"] {
+  --bg-0: #0b1220;
+  --bg-1: #101827;
+  --bg-2: #111827;
+  --card: #111a2b;
+  --text-0: #e2e8f0;
+  --text-1: #94a3b8;
+  --line: #243247;
+  --accent: #34d399;
+  --accent-2: #f59e0b;
+  --danger: #f87171;
+  --success: #34d399;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -27,6 +41,7 @@ body {
     radial-gradient(70rem 38rem at 110% 115%, rgba(11, 106, 99, 0.14), transparent),
     linear-gradient(152deg, var(--bg-0), var(--bg-1) 45%, var(--bg-2));
   min-height: 100svh;
+  transition: background 200ms ease, color 160ms ease;
 }
 
 #root {
@@ -64,6 +79,12 @@ body {
   pointer-events: none;
 }
 
+:root[data-theme="dark"] .bg-grid {
+  background-image:
+    linear-gradient(to right, rgba(52, 211, 153, 0.09) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(52, 211, 153, 0.09) 1px, transparent 1px);
+}
+
 .shape-left {
   width: 24rem;
   height: 24rem;
@@ -79,6 +100,14 @@ body {
   bottom: -10rem;
   right: -8rem;
   animation-delay: 1.2s;
+}
+
+:root[data-theme="dark"] .shape-left {
+  background: radial-gradient(circle at 35% 35%, rgba(245, 158, 11, 0.23), rgba(245, 158, 11, 0.02));
+}
+
+:root[data-theme="dark"] .shape-right {
+  background: radial-gradient(circle at 50% 50%, rgba(52, 211, 153, 0.2), rgba(52, 211, 153, 0.02));
 }
 
 .login-card {
@@ -97,6 +126,12 @@ body {
   animation: enter 460ms ease-out forwards;
   position: relative;
   z-index: 1;
+  transition: border-color 180ms ease, box-shadow 180ms ease, background 180ms ease;
+}
+
+:root[data-theme="dark"] .login-card {
+  background: linear-gradient(168deg, rgba(15, 23, 42, 0.96), rgba(17, 24, 39, 0.95));
+  box-shadow: 0 24px 52px rgba(2, 6, 23, 0.5), 0 2px 8px rgba(2, 6, 23, 0.35);
 }
 
 .login-card::before {
@@ -180,6 +215,37 @@ body {
 .login-form {
   display: grid;
   gap: 0.7rem;
+}
+
+.role-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.role-chip {
+  border: 1px solid color-mix(in srgb, var(--line) 88%, #ffffff 12%);
+  border-radius: 999px;
+  background: color-mix(in srgb, #ffffff 92%, var(--accent) 8%);
+  color: var(--text-1);
+  font: 600 0.78rem/1.2 "IBM Plex Mono", monospace;
+  letter-spacing: 0.02em;
+  padding: 0.58rem 0.72rem;
+  cursor: pointer;
+  transition: border-color 130ms ease, color 130ms ease, background-color 130ms ease;
+}
+
+.role-chip:hover {
+  border-color: color-mix(in srgb, var(--accent) 42%, #ffffff 58%);
+  color: var(--accent);
+}
+
+.role-chip.active {
+  border-color: color-mix(in srgb, var(--accent) 62%, #ffffff 38%);
+  background: linear-gradient(112deg, color-mix(in srgb, var(--accent) 18%, #ffffff 82%), #ffffff);
+  color: #0a4f49;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 15%, transparent 85%);
 }
 
 .field-grid {
@@ -452,6 +518,10 @@ body {
     flex-direction: column;
     align-items: flex-start;
     gap: 0.3rem;
+  }
+
+  .role-switch {
+    grid-template-columns: 1fr;
   }
 
   .field-grid.two-col {
