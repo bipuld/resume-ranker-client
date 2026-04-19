@@ -5,6 +5,7 @@ import {
   Activity,
   ArrowUp,
   Bot,
+  Building2,
   BriefcaseBusiness,
   CalendarClock,
   CircleUserRound,
@@ -38,6 +39,13 @@ import {
 } from "recharts";
 import atsIcon from "../assets/ats-icon.svg";
 import ThemeToggle from "../components/ThemeToggle";
+import {
+  getAdminCompanies,
+  getAdminCompany,
+  unverifyAdminCompany,
+  verifyAdminCompany,
+} from "../api/company";
+import type { CompanyDetailResponse, CompanyListResponse } from "../types/company";
 import { ROUTES } from "../routes/paths";
 import { clearAuthSession, getAuthRole } from "../utils/authSession";
 import "./AdminDashboard.css";
@@ -117,10 +125,37 @@ const SECTION_IDS = [
   "erp-core",
   "ai-monitor",
   "charts",
+  "company-verification",
   "recruiter-management",
   "pipeline-health",
   "quick-actions",
 ] as const;
+
+type CompanyFilter = "all" | "verified" | "pending";
+
+const getErrorMessage = (err: unknown, fallback: string) => {
+  if (
+    typeof err === "object" &&
+    err !== null &&
+    "response" in err &&
+    typeof (err as { response?: { data?: { message?: string; detail?: string } } }).response?.data
+      ?.message === "string"
+  ) {
+    return (err as { response?: { data?: { message?: string } } }).response!.data!.message!;
+  }
+
+  if (
+    typeof err === "object" &&
+    err !== null &&
+    "response" in err &&
+    typeof (err as { response?: { data?: { detail?: string } } }).response?.data?.detail ===
+      "string"
+  ) {
+    return (err as { response?: { data?: { detail?: string } } }).response!.data!.detail!;
+  }
+
+  return fallback;
+};
 
 const erpModules = [
   {
@@ -268,6 +303,12 @@ export default function AdminDashboard() {
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [lastCoordinates, setLastCoordinates] = useState<Coordinates | null>(null);
   const [showBackToTop, setShowBackToTop] = useState(false);
+  const [companyFilter, setCompanyFilter] = useState<CompanyFilter>("all");
+  const [companies, setCompanies] = useState<CompanyDetailResponse[]>([]);
+  const [companiesLoading, setCompaniesLoading] = useState(false);
+  const [companiesError, setCompaniesError] = useState("");
+  const [selectedCompany, setSelectedCompany] = useState<CompanyDetailResponse | null>(null);
+  const [activeCompanyActionId, setActiveCompanyActionId] = useState<string | number | null>(null);
   const [aiControls, setAiControls] = useState({
     autoScoring: true,
     strictFileValidation: true,
@@ -282,6 +323,139 @@ export default function AdminDashboard() {
   }, [currentTime]);
 
   const currentRole = getAuthRole();
+
+  const toDisplay = (value?: string | number | null) => {
+    if (value === null || value === undefined) {
+      return "Not provided";
+    }
+
+    const text = String(value).trim();
+    return text ? text : "Not provided";
+  };
+
+  const formatCompanyAddress = (company: CompanyDetailResponse) => {
+    const primary = [company.address_line1, company.address_line2].filter(Boolean).join(", ");
+    const locality = [company.city, company.state, company.postal_code].filter(Boolean).join(", ");
+    const country = company.country || "";
+    const composed = [primary, locality, country].filter(Boolean).join(" | ");
+    return composed || "Not provided";
+  };
+
+  const formatCompanyGeo = (company: CompanyDetailResponse) => {
+    if (typeof company.latitude !== "number" || typeof company.longitude !== "number") {
+      return "Not provided";
+    }
+
+    return `${company.latitude.toFixed(6)}, ${company.longitude.toFixed(6)}`;
+  };
+
+  const resolveLogoUrl = (logo?: string | null) => {
+    if (!logo) {
+      return "";
+    }
+
+    if (/^https?:\/\//i.test(logo)) {
+      return logo;
+    }
+
+    const apiBase = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api/v1/").replace(/\/?api\/v1\/?$/, "");
+    return `${apiBase}${logo.startsWith("/") ? "" : "/"}${logo}`;
+  };
+
+  const normalizeCompanyList = (
+    payload: CompanyListResponse | CompanyDetailResponse[],
+  ): CompanyDetailResponse[] => {
+    if (Array.isArray(payload)) {
+      return payload;
+    }
+
+    if (Array.isArray(payload.results)) {
+      return payload.results;
+    }
+
+    return [];
+  };
+
+  const loadCompanies = useCallback(
+    async (filter: CompanyFilter = companyFilter) => {
+      setCompaniesLoading(true);
+      setCompaniesError("");
+
+      try {
+        const params =
+          filter === "verified"
+            ? { is_verified: true }
+            : filter === "pending"
+              ? { is_verified: false }
+              : undefined;
+
+        const res = await getAdminCompanies(params);
+        const list = normalizeCompanyList(res);
+        setCompanies(list);
+
+        if (selectedCompany?.id) {
+          const refreshed = list.find((company) => company.id === selectedCompany.id) || null;
+          setSelectedCompany(refreshed);
+        }
+      } catch (err: unknown) {
+        setCompaniesError(getErrorMessage(err, "Could not load company list right now."));
+      } finally {
+        setCompaniesLoading(false);
+      }
+    },
+    [companyFilter, selectedCompany?.id],
+  );
+
+  const handleViewCompany = useCallback(async (id: string | number) => {
+    setActiveCompanyActionId(id);
+    setCompaniesError("");
+
+    try {
+      const company = await getAdminCompany(id);
+      setSelectedCompany(company);
+    } catch (err: unknown) {
+      setCompaniesError(getErrorMessage(err, "Could not load company details."));
+    } finally {
+      setActiveCompanyActionId(null);
+    }
+  }, []);
+
+  const applyCompanyVerificationAction = useCallback(
+    async (
+      id: string | number,
+      action: "toggle" | "verify" | "unverify",
+    ) => {
+      setActiveCompanyActionId(id);
+      setCompaniesError("");
+
+      try {
+        const currentCompany = companies.find((company) => company.id === id);
+        const isVerified = currentCompany?.is_verified === true;
+
+        if (action === "toggle") {
+          await verifyAdminCompany(id);
+        } else if (action === "verify") {
+          if (!isVerified) {
+            await verifyAdminCompany(id);
+          }
+        } else if (isVerified) {
+          await unverifyAdminCompany(id);
+        }
+
+        await loadCompanies();
+
+        if (selectedCompany?.id === id) {
+          const refreshed = await getAdminCompany(id);
+          setSelectedCompany(refreshed);
+        }
+      } catch (err: unknown) {
+        setCompaniesError(getErrorMessage(err, "Could not update company verification status."));
+      } finally {
+        setActiveCompanyActionId(null);
+      }
+    },
+    [companies, loadCompanies, selectedCompany?.id],
+  );
 
   const filteredRecruiters = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -302,6 +476,10 @@ export default function AdminDashboard() {
   useEffect(() => {
     localStorage.setItem(RECRUITER_STORAGE_KEY, JSON.stringify(recruiters));
   }, [recruiters]);
+
+  useEffect(() => {
+    void loadCompanies(companyFilter);
+  }, [companyFilter, loadCompanies]);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -583,14 +761,14 @@ export default function AdminDashboard() {
   };
 
   return (
-    <main className="admin-shell">
+    <main className="admin-shell min-h-screen bg-gradient-to-br from-slate-100 via-teal-50 to-amber-50 text-slate-900 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 dark:text-slate-100">
       <ThemeToggle />
       <div className="ambient ambient-one" aria-hidden="true" />
       <div className="ambient ambient-two" aria-hidden="true" />
       <div className="ambient-grid" aria-hidden="true" />
 
-      <section className="admin-layout">
-        <aside className="admin-side-panel" aria-label="Admin navigation">
+      <section className="admin-layout grid gap-6 xl:grid-cols-[18rem,minmax(0,1fr)]">
+        <aside className="admin-side-panel rounded-3xl border border-white/10 bg-white/5 p-4 shadow-2xl backdrop-blur-xl" aria-label="Admin navigation">
           <div className="brand-lockup">
             <img src={atsIcon} alt="Apex ATS" className="brand-lockup-icon" />
             <div>
@@ -635,6 +813,14 @@ export default function AdminDashboard() {
               Analytics
             </a>
             <a
+              href="#company-verification"
+              className={`menu-link ${activeSection === "company-verification" ? "active" : ""}`}
+              aria-current={activeSection === "company-verification" ? "page" : undefined}
+              onClick={(event) => handleSectionNav(event, "company-verification")}
+            >
+              Company Verification
+            </a>
+            <a
               href="#recruiter-management"
               className={`menu-link ${activeSection === "recruiter-management" ? "active" : ""}`}
               aria-current={activeSection === "recruiter-management" ? "page" : undefined}
@@ -669,8 +855,8 @@ export default function AdminDashboard() {
           </div>
         </aside>
 
-        <div className="admin-main">
-          <header className="admin-header tab-anchor" id="overview">
+        <div className="admin-main space-y-6">
+          <header className="admin-header tab-anchor rounded-3xl border border-white/10 bg-white/5 p-6 shadow-xl backdrop-blur-xl" id="overview">
             <div>
               <p className="header-kicker">Hiring Mission Control</p>
               <h2>{greetingLabel}, Admin</h2>
@@ -716,9 +902,9 @@ export default function AdminDashboard() {
             </div>
           </header>
 
-          <section className="metric-grid" aria-label="Key hiring metrics ">
+          <section className="metric-grid grid gap-4 md:grid-cols-2 xl:grid-cols-4" aria-label="Key hiring metrics ">
             {pipelineSummary.map((metric) => (
-              <article className="metric-card" key={metric.label}>
+              <article className="metric-card rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur-xl transition hover:-translate-y-0.5 hover:bg-white/10" key={metric.label}>
                 <p>{metric.label}</p>
                 <h3>{metric.value}</h3>
                 <span>{metric.trend}</span>
@@ -726,7 +912,7 @@ export default function AdminDashboard() {
             ))}
           </section>
 
-          <section className="insight-strip" aria-label="Operational KPI strip">
+          <section className="insight-strip grid gap-3 rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur-xl md:grid-cols-2 xl:grid-cols-4" aria-label="Operational KPI strip">
             <article>
               <BriefcaseBusiness size={18} />
               <div>
@@ -757,11 +943,11 @@ export default function AdminDashboard() {
             </article>
           </section>
 
-          <section className="erp-grid tab-anchor" id="erp-core" aria-label="ERP core modules">
+          <section className="erp-grid tab-anchor grid gap-4 md:grid-cols-2" id="erp-core" aria-label="ERP core modules">
             {erpModules.map((module) => {
               const Icon = module.icon;
               return (
-                <article className="panel erp-module-card" key={module.title}>
+                <article className="panel erp-module-card rounded-2xl border border-white/10 bg-white/5 p-5 shadow-lg backdrop-blur-xl" key={module.title}>
                   <div className="erp-module-top">
                     <div className="erp-module-title">
                       <Icon size={16} />
@@ -776,9 +962,9 @@ export default function AdminDashboard() {
             })}
           </section>
 
-          <section className="owner-status-grid" aria-label="System owner controls">
+          <section className="owner-status-grid grid gap-4 md:grid-cols-2 xl:grid-cols-4" aria-label="System owner controls">
             {ownerStatus.map((item) => (
-              <article className="panel owner-status-card" key={item.label}>
+              <article className="panel owner-status-card rounded-2xl border border-white/10 bg-white/5 p-5 shadow-lg backdrop-blur-xl" key={item.label}>
                 <p>{item.label}</p>
                 <strong>{item.value}</strong>
                 <span className={`erp-status status-${item.state.toLowerCase()}`}>{item.state}</span>
@@ -786,7 +972,7 @@ export default function AdminDashboard() {
             ))}
           </section>
 
-          <section className="panel erp-queue-panel" aria-label="ERP approvals queue">
+          <section className="panel erp-queue-panel rounded-2xl border border-white/10 bg-white/5 p-5 shadow-lg backdrop-blur-xl" aria-label="ERP approvals queue">
             <div className="panel-header">
               <h3>Approvals Queue</h3>
               <span>Pending tasks across ERP workflows</span>
@@ -804,8 +990,8 @@ export default function AdminDashboard() {
             </div>
           </section>
 
-          <section className="ai-monitor-grid tab-anchor" id="ai-monitor" aria-label="AI monitoring and control">
-            <article className="panel ai-monitor-card">
+          <section className="ai-monitor-grid tab-anchor grid gap-4 xl:grid-cols-3" id="ai-monitor" aria-label="AI monitoring and control">
+            <article className="panel ai-monitor-card rounded-2xl border border-white/10 bg-white/5 p-5 shadow-lg backdrop-blur-xl xl:col-span-2">
               <div className="panel-header">
                 <h3><Bot size={16} /> AI Monitoring Center</h3>
                 <span>ATS scoring and resume parsing control plane</span>
@@ -833,7 +1019,7 @@ export default function AdminDashboard() {
               </div>
             </article>
 
-            <article className="panel ai-score-card">
+            <article className="panel ai-score-card rounded-2xl border border-white/10 bg-white/5 p-5 shadow-lg backdrop-blur-xl">
               <div className="panel-header">
                 <h3>ATS Score Distribution</h3>
                 <span>Candidate quality by final score band (0.0-1.0)</span>
@@ -851,7 +1037,7 @@ export default function AdminDashboard() {
               </div>
             </article>
 
-            <article className="panel ai-feed-card">
+            <article className="panel ai-feed-card rounded-2xl border border-white/10 bg-white/5 p-5 shadow-lg backdrop-blur-xl">
               <div className="panel-header">
                 <h3>AI Event Feed</h3>
                 <span>Recent scoring and parser engine events</span>
@@ -868,7 +1054,7 @@ export default function AdminDashboard() {
             </article>
           </section>
 
-          <section className="panel" aria-label="Role and access matrix">
+          <section className="panel rounded-2xl border border-white/10 bg-white/5 p-5 shadow-lg backdrop-blur-xl" aria-label="Role and access matrix">
             <div className="panel-header">
               <h3>Role Access Matrix</h3>
               <span>Mapped to system roles from backend policy</span>
@@ -895,8 +1081,8 @@ export default function AdminDashboard() {
             </div>
           </section>
 
-          <section className="chart-grid tab-anchor" id="charts">
-            <article className="panel chart-panel">
+          <section className="chart-grid tab-anchor grid gap-4 xl:grid-cols-3" id="charts">
+            <article className="panel chart-panel rounded-2xl border border-white/10 bg-white/5 p-5 shadow-lg backdrop-blur-xl xl:col-span-2">
               <div className="panel-header">
                 <h3>Hiring Velocity</h3>
                 <span>Monthly trend: candidates, interviews, and offers</span>
@@ -929,7 +1115,7 @@ export default function AdminDashboard() {
               </div>
             </article>
 
-            <article className="panel chart-panel">
+            <article className="panel chart-panel rounded-2xl border border-white/10 bg-white/5 p-5 shadow-lg backdrop-blur-xl">
               <div className="panel-header">
                 <h3>Candidate Source Mix</h3>
                 <span>Top channels driving candidate inflow</span>
@@ -961,7 +1147,7 @@ export default function AdminDashboard() {
               </div>
             </article>
 
-            <article className="panel chart-panel">
+            <article className="panel chart-panel rounded-2xl border border-white/10 bg-white/5 p-5 shadow-lg backdrop-blur-xl">
               <div className="panel-header">
                 <h3>Recruiter Output</h3>
                 <span>Hires and interviews by recruiter</span>
@@ -982,8 +1168,8 @@ export default function AdminDashboard() {
             </article>
           </section>
 
-          <section className="panel-grid">
-            <article className="panel tab-anchor" id="recruiter-management">
+          <section className="panel-grid grid gap-4 xl:grid-cols-2">
+            <article className="panel tab-anchor rounded-2xl border border-white/10 bg-white/5 p-5 shadow-lg backdrop-blur-xl" id="recruiter-management">
               <div className="panel-header">
                 <h3>Create Recruiter</h3>
                 <span>Invite and assign hiring ownership</span>
@@ -1048,7 +1234,7 @@ export default function AdminDashboard() {
               {notice && <p className="inline-notice">{notice}</p>}
             </article>
 
-            <article className="panel tab-anchor" id="pipeline-health">
+            <article className="panel tab-anchor rounded-2xl border border-white/10 bg-white/5 p-5 shadow-lg backdrop-blur-xl" id="pipeline-health">
               <div className="panel-header">
                 <h3>Pipeline Health</h3>
                 <span>Current priorities across the hiring funnel</span>
@@ -1079,7 +1265,7 @@ export default function AdminDashboard() {
             </article>
           </section>
 
-          <section className="panel" aria-label="Recruiter directory">
+          <section className="panel rounded-2xl border border-white/10 bg-white/5 p-5 shadow-lg backdrop-blur-xl" aria-label="Recruiter directory">
             <div className="panel-header stack-mobile">
               <div>
                 <h3>Recruiter Directory</h3>
@@ -1093,7 +1279,7 @@ export default function AdminDashboard() {
                   onChange={(event) => setQuery(event.target.value)}
                   aria-label="Search recruiters"
                 />
-                <button type="button" className="secondary-action" onClick={handleExportRecruiters}>
+                <button type="button" className="secondary-action export-action-btn" onClick={handleExportRecruiters}>
                   Export CSV
                 </button>
               </div>
@@ -1135,7 +1321,246 @@ export default function AdminDashboard() {
             </div>
           </section>
 
-          <section className="panel tab-anchor" id="quick-actions">
+          <section className="panel tab-anchor company-verification-panel rounded-2xl border border-white/10 bg-white/5 p-5 shadow-lg backdrop-blur-xl" id="company-verification" aria-label="Company verification management">
+            <div className="panel-header stack-mobile">
+              <div>
+                <h3><Building2 size={16} /> Company Verification Center</h3>
+                <span>Manage verification state for recruiter companies via admin endpoints</span>
+              </div>
+              <div className="directory-actions company-filter-group">
+                <button
+                  type="button"
+                  className={`secondary-action ${companyFilter === "all" ? "is-active" : ""}`}
+                  onClick={() => setCompanyFilter("all")}
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  className={`secondary-action ${companyFilter === "verified" ? "is-active" : ""}`}
+                  onClick={() => setCompanyFilter("verified")}
+                >
+                  Verified
+                </button>
+                <button
+                  type="button"
+                  className={`secondary-action ${companyFilter === "pending" ? "is-active" : ""}`}
+                  onClick={() => setCompanyFilter("pending")}
+                >
+                  Pending
+                </button>
+                <button type="button" className="secondary-action" onClick={() => void loadCompanies(companyFilter)}>
+                  Refresh
+                </button>
+              </div>
+            </div>
+
+            {companiesError && <p className="inline-notice company-error">{companiesError}</p>}
+
+            <div className="table-wrap company-table-wrap">
+              <table className="company-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Company</th>
+                    <th>Size</th>
+                    <th>Email</th>
+                    <th>Country</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {companiesLoading ? (
+                    <tr>
+                      <td colSpan={7} className="table-empty-state">Loading companies...</td>
+                    </tr>
+                  ) : companies.length > 0 ? (
+                    companies.map((company) => (
+                      <tr key={String(company.id ?? company.email ?? company.name ?? "company") }>
+                        <td>{company.id ?? "-"}</td>
+                        <td>{company.name ?? "Unnamed company"}</td>
+                        <td>{company.company_size ?? company.size ?? "-"}</td>
+                        <td>{company.email ?? "-"}</td>
+                        <td>{company.country ?? "-"}</td>
+                        <td>
+                          <span className={`status-pill ${company.is_verified ? "status-active" : "status-paused"}`}>
+                            {company.is_verified ? "Verified" : "Pending"}
+                          </span>
+                        </td>
+                        <td>
+                          <div className="company-actions">
+                            <button
+                              type="button"
+                              className="secondary-action company-view-btn"
+                              onClick={() => company.id && handleViewCompany(company.id)}
+                              disabled={!company.id || activeCompanyActionId === company.id}
+                            >
+                              View
+                            </button>
+                            {company.is_verified ? (
+                              <button
+                                type="button"
+                                  className="secondary-action company-action-btn"
+                                onClick={() => company.id && applyCompanyVerificationAction(company.id, "unverify")}
+                                disabled={!company.id || activeCompanyActionId === company.id}
+                              >
+                                Unverify
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                  className="secondary-action company-action-btn"
+                                onClick={() => company.id && applyCompanyVerificationAction(company.id, "verify")}
+                                disabled={!company.id || activeCompanyActionId === company.id}
+                              >
+                                Verify
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={7} className="table-empty-state">No companies found for the selected filter.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {selectedCompany && (
+              <div className="company-detail-card">
+                <div className="company-detail-hero">
+                  <div>
+                    <p className="company-detail-eyebrow">Company Profile</p>
+                    <h3>{selectedCompany.name || "Unnamed company"}</h3>
+                    <p className="company-detail-subtitle">
+                      Professional verification view with complete business and contact information.
+                    </p>
+                  </div>
+                  <div className="company-logo-hero">
+                    {resolveLogoUrl(selectedCompany.logo) ? (
+                      <img src={resolveLogoUrl(selectedCompany.logo)} alt={`${selectedCompany.name || "Company"} logo`} className="company-logo-image" />
+                    ) : (
+                      <div className="company-logo-fallback">
+                        {(selectedCompany.name || "C").slice(0, 1).toUpperCase()}
+                      </div>
+                    )}
+                  </div>
+                  <div className="company-detail-hero-actions">
+                    <span className={`status-pill ${selectedCompany.is_verified ? "status-active" : "status-paused"}`}>
+                      {selectedCompany.is_verified ? "Verified" : "Pending Review"}
+                    </span>
+                    {selectedCompany.is_verified ? (
+                      <button
+                        type="button"
+                        className="secondary-action"
+                        onClick={() => selectedCompany.id && applyCompanyVerificationAction(selectedCompany.id, "unverify")}
+                        disabled={!selectedCompany.id || activeCompanyActionId === selectedCompany.id}
+                      >
+                        Mark Pending
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="secondary-action"
+                        onClick={() => selectedCompany.id && applyCompanyVerificationAction(selectedCompany.id, "verify")}
+                        disabled={!selectedCompany.id || activeCompanyActionId === selectedCompany.id}
+                      >
+                        Verify Company
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="company-detail-layout">
+                  <section className="company-detail-section">
+                    <h4>Business Information</h4>
+                    <div className="company-detail-grid">
+                      <article>
+                        <p>Industry</p>
+                        <strong>{toDisplay(selectedCompany.industry)}</strong>
+                      </article>
+                      <article>
+                        <p>Company Size</p>
+                        <strong>{toDisplay(selectedCompany.company_size ?? selectedCompany.size)}</strong>
+                      </article>
+                      <article>
+                        <p>Website</p>
+                        <strong>{toDisplay(selectedCompany.website)}</strong>
+                      </article>
+                    </div>
+                    <article className="company-detail-wide">
+                      <p>Description</p>
+                      <strong>{toDisplay(selectedCompany.description)}</strong>
+                    </article>
+                  </section>
+
+                  <section className="company-detail-section">
+                    <h4>Company Contact</h4>
+                    <div className="company-detail-grid">
+                      <article>
+                        <p>Official Email</p>
+                        <strong>{toDisplay(selectedCompany.email)}</strong>
+                      </article>
+                      <article>
+                        <p>Official Phone</p>
+                        <strong>{toDisplay(selectedCompany.phone)}</strong>
+                      </article>
+                      <article>
+                        <p>Verification Status</p>
+                        <strong>{selectedCompany.is_verified ? "Verified" : "Pending"}</strong>
+                      </article>
+                    </div>
+                  </section>
+
+                  <section className="company-detail-section">
+                    <h4>Recruiter Liaison</h4>
+                    <div className="company-detail-grid">
+                      <article>
+                        <p>Contact Person</p>
+                        <strong>{toDisplay(selectedCompany.contact_person_name)}</strong>
+                      </article>
+                      <article>
+                        <p>Designation</p>
+                        <strong>{toDisplay(selectedCompany.contact_person_designation)}</strong>
+                      </article>
+                      <article>
+                        <p>Contact Email</p>
+                        <strong>{toDisplay(selectedCompany.contact_person_email)}</strong>
+                      </article>
+                      <article>
+                        <p>Contact Phone</p>
+                        <strong>{toDisplay(selectedCompany.contact_person_phone)}</strong>
+                      </article>
+                    </div>
+                  </section>
+
+                  <section className="company-detail-section">
+                    <h4>Address & Location</h4>
+                    <div className="company-detail-grid">
+                      <article>
+                        <p>Registered Address</p>
+                        <strong>{formatCompanyAddress(selectedCompany)}</strong>
+                      </article>
+                      <article>
+                        <p>Geo Coordinates</p>
+                        <strong>{formatCompanyGeo(selectedCompany)}</strong>
+                      </article>
+                      <article>
+                        <p>Area</p>
+                        <strong>{toDisplay([selectedCompany.city, selectedCompany.country].filter(Boolean).join(", "))}</strong>
+                      </article>
+                    </div>
+                  </section>
+                </div>
+              </div>
+            )}
+          </section>
+
+          <section className="panel tab-anchor rounded-2xl border border-white/10 bg-white/5 p-5 shadow-lg backdrop-blur-xl" id="quick-actions">
             <div className="panel-header">
               <h3>Quick Actions</h3>
               <span>Common admin tasks for hiring operations</span>

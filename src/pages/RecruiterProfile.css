@@ -1,0 +1,238 @@
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap");
+
+.recruiter-profile-shell {
+  min-height: 100svh;
+  padding: 2rem 1.2rem;
+  background:
+    radial-gradient(70rem 36rem at 6% -10%, rgba(11, 106, 99, 0.15), transparent),
+    radial-gradient(66rem 34rem at 98% 120%, rgba(30, 64, 175, 0.11), transparent),
+    linear-gradient(145deg, #eef4f3, #f5f8ff 52%, #f8fbfc);
+}
+
+.recruiter-profile-card {
+  max-width: 900px;
+  margin: 0 auto;
+  border: 1px solid #dbe8e5;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.12);
+  padding: 1.6rem;
+}
+
+.recruiter-profile-head h1 {
+  margin: 0.7rem 0 0.25rem;
+  font-family: "Space Grotesk", sans-serif;
+  color: #0f172a;
+}
+
+.recruiter-profile-head p {
+  margin: 0;
+  color: #64748b;
+}
+
+.recruiter-profile-back {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #0f172a;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.5rem 0.8rem;
+  cursor: pointer;
+}
+
+.profile-form {
+  margin-top: 1rem;
+  display: grid;
+  gap: 1.2rem;
+}
+
+.profile-section {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 1.2rem;
+  background: #f9fafb;
+}
+
+.profile-section h3 {
+  margin: 0 0 1rem 0;
+  font-size: 1rem;
+  color: #0f172a;
+  font-family: "Space Grotesk", sans-serif;
+  font-weight: 600;
+}
+
+.profile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+
+.profile-grid.profile-full-width {
+  grid-template-columns: 1fr;
+}
+
+.profile-image-upload {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.profile-image-input {
+  display: none;
+}
+
+.profile-image-label {
+  border: 2px dashed #cbd5e1;
+  border-radius: 10px;
+  padding: 2rem 1.5rem;
+  cursor: pointer;
+  appearance: none;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  color: #475569;
+  font: 500 0.92rem "Space Grotesk", sans-serif;
+  transition: all 0.3s ease;
+}
+
+.profile-image-label:hover {
+  border-color: #0b6a63;
+  background: #f0fdf9;
+  color: #0b6a63;
+}
+
+.profile-image-label:focus-visible,
+.profile-image-preview:focus-visible {
+  outline: 3px solid rgba(11, 106, 99, 0.25);
+  outline-offset: 2px;
+}
+
+.profile-grid label {
+  font: 600 0.85rem/1.2 "Space Grotesk", sans-serif;
+  color: #334155;
+  display: block;
+  margin-bottom: 0.35rem;
+}
+
+.profile-grid input,
+.profile-grid select,
+.profile-grid textarea {
+  width: 100%;
+  border: 1px solid #dbe5f0;
+  border-radius: 10px;
+  padding: 0.7rem 0.85rem;
+  font: 500 0.92rem "Space Grotesk", sans-serif;
+  color: #0f172a;
+  background: #fff;
+  font-family: inherit;
+}
+
+.profile-grid input:disabled {
+  background: #f8fafc;
+  color: #64748b;
+}
+
+.profile-grid select {
+  cursor: pointer;
+}
+
+.profile-grid select option {
+  background: #fff;
+  color: #0f172a;
+}
+
+.profile-grid textarea {
+  resize: vertical;
+  min-height: 100px;
+  line-height: 1.4;
+}
+
+.profile-image-preview {
+  width: 150px;
+  height: 150px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  background: #f1f5f9;
+  padding: 0;
+  cursor: pointer;
+}
+
+.profile-image-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.profile-save-btn {
+  border: none;
+  background: linear-gradient(96deg, #0b6a63, #0d9488 58%, #0b6a63);
+  color: #f8fffd;
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+  font: 600 0.92rem "Space Grotesk", sans-serif;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  cursor: pointer;
+}
+
+.profile-save-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.password-card {
+  margin-top: 1.4rem;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 1.2rem;
+}
+
+.password-card h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  color: #0f172a;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.profile-feedback {
+  margin: 0.8rem 0 0;
+  font-size: 0.88rem;
+}
+
+.profile-error {
+  color: #b91c1c;
+}
+
+.profile-success {
+  color: #047857;
+}
+
+.profile-hint {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.83rem;
+}
+
+@media (max-width: 760px) {
+  .profile-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .recruiter-profile-card {
+    padding: 1rem;
+  }
+
+  .profile-section {
+    padding: 1rem;
+  }
+}

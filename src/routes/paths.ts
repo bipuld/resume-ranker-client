@@ -1,12 +1,20 @@
 export const ROUTES = {
   root: "/",
   auth: {
+    login: "/login",
     candidateLogin: "/login",
     adminLogin: "/admin/login",
     recruiterLogin: "/recruiter/login",
   },
   dashboard: {
     admin: "/dashboard/admin",
+    recruiter: "/dashboard/recruiter",
+  },
+  recruiter: {
+    createCompany: "/create-company",
+    editCompany: "/edit-company",
+    pendingApproval: "/pending-approval",
+    profile: "/recruiter/profile",
   },
   legacy: {
     adminLogin: "/admin-login",

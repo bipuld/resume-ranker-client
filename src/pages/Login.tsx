@@ -1,21 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
-  changePassword,
   loginUser,
   requestPasswordReset,
   resendOtp,
   signupUser,
   verifyLoginOtp,
 } from "../api/auth";
+import { getCompanyStatus } from "../api/company";
 import ThemeToggle from "../components/ThemeToggle";
 import { ROUTES } from "../routes/paths";
-import { getOrCreateDeviceToken, saveAuthRole, saveAuthSession } from "../utils/authSession";
+import {
+  getOrCreateDeviceToken,
+  resolveRecruiterCompanyStage,
+  saveAuthRole,
+  saveAuthSession,
+  saveRecruiterCompanyStage,
+} from "../utils/authSession";
 import atsIcon from "../assets/ats-icon.svg";
 import "./Login.css";
 
-type AuthMode = "login" | "signup" | "otp" | "reset" | "change";
+type AuthMode = "login" | "signup" | "otp" | "reset";
 type LoginRole = "candidate" | "recruiter" | "admin";
+type SignupRole = "candidate" | "recruiter";
 
 type LoginProps = {
   defaultLoginRole?: LoginRole;
@@ -58,20 +65,6 @@ const isUnverifiedEmailError = (message: string) => {
   );
 };
 
-const PASSWORD_POLICY = {
-  minLength: 8,
-};
-
-const isStrongPassword = (value: string) => {
-  const hasUpper = /[A-Z]/.test(value);
-  const hasLower = /[a-z]/.test(value);
-  const hasNumber = /\d/.test(value);
-  const hasSpecial = /[^A-Za-z0-9]/.test(value);
-  const hasLength = value.length >= PASSWORD_POLICY.minLength;
-
-  return hasUpper && hasLower && hasNumber && hasSpecial && hasLength;
-};
-
 const getDeviceType = () => {
   const userAgent = navigator.userAgent.toLowerCase();
   return /android|iphone|ipad|ipod|mobile/i.test(userAgent) ? "mobile" : "web";
@@ -105,20 +98,43 @@ const modeContent: Record<AuthMode, { title: string; help: string; actionLabel: 
     help: "Enter your email and we will send a password reset link.",
     actionLabel: "Send reset email",
   },
-  change: {
-    title: "Change password",
-    help: "Use your current password and set a new secure password.",
-    actionLabel: "Update password",
-  },
 };
+
+const showcaseByRole = {
+  candidate: {
+    eyebrow: "Candidate Workspace",
+    title: "Build your career with clarity",
+    description:
+      "Apply quickly, track every stage, and keep your job journey organized from one dashboard.",
+    stats: ["1-click applications", "Live status tracking", "Unified candidate profile"],
+  },
+  recruiter: {
+    eyebrow: "Recruiter Workspace",
+    title: "Hire better with a real system",
+    description:
+      "Launch openings, screen applicants, and manage hiring operations with reliable recruiter tools.",
+    stats: ["Smart applicant pipelines", "Team collaboration tools", "Company approval workflow"],
+  },
+  admin: {
+    eyebrow: "Admin Workspace",
+    title: "Control and monitor the platform",
+    description:
+      "Oversee recruiter onboarding, governance, and system health from a secure operational console.",
+    stats: ["Access management", "Approval and compliance controls", "Operational visibility"],
+  },
+} as const;
 
 export default function Login({
   defaultLoginRole = "candidate",
   lockLoginRole = false,
 }: LoginProps) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [mode, setMode] = useState<AuthMode>("login");
   const [loginRole, setLoginRole] = useState<LoginRole>(defaultLoginRole);
+  const [signupRole, setSignupRole] = useState<SignupRole>(
+    defaultLoginRole === "recruiter" ? "recruiter" : "candidate",
+  );
 
   useEffect(() => {
     if (lockLoginRole) {
@@ -126,7 +142,14 @@ export default function Login({
     }
   }, [defaultLoginRole, lockLoginRole]);
 
+  useEffect(() => {
+    if (loginRole === "candidate" || loginRole === "recruiter") {
+      setSignupRole(loginRole);
+    }
+  }, [loginRole]);
+
   const deviceToken = useMemo(() => getOrCreateDeviceToken(), []);
+  const currentShowcase = useMemo(() => showcaseByRole[loginRole], [loginRole]);
   const deviceType = useMemo(() => getDeviceType(), []);
   const deviceName = useMemo(() => getDeviceName(), []);
   const [form, setForm] = useState({
@@ -148,16 +171,42 @@ export default function Login({
   const otpRefs = useRef<Array<HTMLInputElement | null>>([]);
   const [otpTimeLeft, setOtpTimeLeft] = useState(OTP_DURATION_SECONDS);
   const [resetEmail, setResetEmail] = useState("");
-  const [changeForm, setChangeForm] = useState({
-    old_password: "",
-    new_password: "",
-    confirm_password: "",
-  });
   const [showLoginPassword, setShowLoginPassword] = useState(false);
-  const [showChangePasswords, setShowChangePasswords] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const reason = params.get("reason");
+    const sessionNotice = window.sessionStorage.getItem("ats.auth.notice");
+    let noticeMessage = sessionNotice;
+
+    if (sessionNotice) {
+      try {
+        const parsed = JSON.parse(sessionNotice) as {
+          message?: string;
+          expiresAt?: number;
+        };
+
+        if (parsed?.message) {
+          if (parsed.expiresAt && parsed.expiresAt < Date.now()) {
+            window.sessionStorage.removeItem("ats.auth.notice");
+            noticeMessage = "";
+          } else {
+            noticeMessage = parsed.message;
+          }
+        }
+      } catch {
+        noticeMessage = sessionNotice;
+      }
+    }
+
+    if (reason === "session-expired" || noticeMessage) {
+      setError(noticeMessage || "Your session expired. Please sign in again.");
+      setSuccess("");
+    }
+  }, [location.search]);
 
   useEffect(() => {
     if (mode !== "otp" || otpTimeLeft <= 0) {
@@ -207,6 +256,32 @@ export default function Login({
         return;
       }
 
+      if (resolvedRole === "recruiter") {
+        let stage = resolveRecruiterCompanyStage(res);
+
+        try {
+          const companyStatus = await getCompanyStatus();
+          stage = resolveRecruiterCompanyStage(companyStatus);
+        } catch {
+          // Fall back to login response if the company lookup is unavailable.
+        }
+
+        saveRecruiterCompanyStage(stage);
+
+        if (stage === "no-company") {
+          navigate(ROUTES.recruiter.createCompany);
+          return;
+        }
+
+        if (stage === "pending-approval") {
+          navigate(ROUTES.recruiter.pendingApproval);
+          return;
+        }
+
+        navigate(ROUTES.dashboard.recruiter);
+        return;
+      }
+
       setSuccess(res.message || "Login successful.");
     } catch (err: unknown) {
       const loginError = getErrorMessage(err, "Login failed. Please check your email and password.");
@@ -248,6 +323,9 @@ export default function Login({
     setIsLoading(true);
 
     try {
+      const resolvedSignupRole =
+        lockLoginRole && defaultLoginRole === "recruiter" ? "recruiter" : "candidate";
+
       const res = await signupUser({
         email: signupForm.email.trim().toLowerCase(),
         password: signupForm.password,
@@ -256,7 +334,7 @@ export default function Login({
         last_name: signupForm.last_name.trim(),
         phone: signupForm.phone.trim(),
         full_name: fullName,
-        role: 'candidate',  // Hidden value - automatically sent as 'candidate'
+        role: resolvedSignupRole,
       });
 
       const signupEmail = signupForm.email.trim().toLowerCase();
@@ -382,47 +460,71 @@ export default function Login({
     }
   };
 
-  const handleChangePassword = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const handleSocialLogin = (provider: "google" | "facebook") => {
     setError("");
-    setSuccess("");
-
-    if (changeForm.new_password !== changeForm.confirm_password) {
-      setError("New password and confirm password must match.");
-      return;
-    }
-
-    if (!isStrongPassword(changeForm.new_password)) {
-      setError(
-        "Use a stronger password: at least 8 characters with uppercase, lowercase, number, and symbol.",
-      );
-      return;
-    }
-
-    setIsLoading(true);
-
-    try {
-      const res = await changePassword({
-        old_password: changeForm.old_password,
-        new_password: changeForm.new_password,
-      });
-      setSuccess(res.message || "Password changed successfully.");
-      setChangeForm({ old_password: "", new_password: "", confirm_password: "" });
-    } catch (err: unknown) {
-      setError(getErrorMessage(err, "Could not change password."));
-    } finally {
-      setIsLoading(false);
-    }
+    setSuccess(`${provider === "google" ? "Google" : "Facebook"} login will be available soon.`);
   };
 
   return (
-    <main className="login-shell">
-      <ThemeToggle />
+    <main className="login-shell min-h-screen bg-gradient-to-br from-slate-100 via-cyan-50 to-indigo-100 text-slate-900 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 dark:text-slate-100">
+      <ThemeToggle compact />
       <div className="bg-shape shape-left" aria-hidden="true" />
       <div className="bg-shape shape-right" aria-hidden="true" />
       <div className="bg-grid" aria-hidden="true" />
 
-      <section className="login-card" aria-labelledby="login-title">
+      <div className="login-layout">
+        <aside className="login-showcase" aria-label="Platform overview">
+          <p className="showcase-eyebrow">{currentShowcase.eyebrow}</p>
+          <h2>{currentShowcase.title}</h2>
+          <p>{currentShowcase.description}</p>
+
+          <div className="showcase-metrics">
+            <article>
+              <strong>{currentShowcase.stats[0]}</strong>
+              <span>Designed for daily production workflows</span>
+            </article>
+            <article>
+              <strong>{currentShowcase.stats[1]}</strong>
+              <span>Built to reduce friction and delays</span>
+            </article>
+            <article>
+              <strong>{currentShowcase.stats[2]}</strong>
+              <span>Reliable experience across every role</span>
+            </article>
+          </div>
+
+          {loginRole !== "admin" && (
+            <div className="showcase-cta" role="group" aria-label="Primary account actions">
+              <div className="showcase-cta-actions">
+                <button
+                  type="button"
+                  className="showcase-primary"
+                  onClick={() =>
+                    navigate(loginRole === "recruiter" ? ROUTES.auth.login : ROUTES.auth.recruiterLogin)
+                  }
+                >
+                  {loginRole === "recruiter" ? "Apply for job" : "Start hiring with us"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="system-orbit" aria-hidden="true">
+            <div className="orbit-core" />
+            <div className="orbit-card profit">
+              <p>Applicants</p>
+              <strong>624+</strong>
+              <span>+18.4% this week</span>
+            </div>
+            <div className="orbit-card conversion">
+              <p>Interviews</p>
+              <strong>124</strong>
+              <span>+12.0% conversion</span>
+            </div>
+          </div>
+        </aside>
+
+        <section className="login-card" aria-labelledby="login-title">
         <header className="brand-header">
           <div className="brand-main">
             <img src={atsIcon} className="brand-icon" alt="ATS icon" />
@@ -438,14 +540,18 @@ export default function Login({
           {mode === "login" && loginRole === "admin"
             ? "Admin Panel Login"
             : mode === "login" && loginRole === "recruiter"
-              ? "Recruiter Login"
+              ? "Smart Hire With Us"
+              : mode === "login"
+                ? "Candidate Login"
               : modeContent[mode].title}
         </h1>
         <p className="subtitle">
           {mode === "login" && loginRole === "admin"
             ? "Sign in with your administrator account to access the admin panel."
             : mode === "login" && loginRole === "recruiter"
-              ? "Sign in with your recruiter account to manage jobs and applicants."
+              ? "Apply for jobs in a focused workflow built for clarity and fast updates."
+              : mode === "login"
+                ? '"Smart start hiring with us" and discover better career opportunities in one place.'
             : modeContent[mode].help}
         </p>
 
@@ -456,29 +562,6 @@ export default function Login({
 
         {mode === "login" && (
           <form className="login-form" onSubmit={handleLogin}>
-            {!lockLoginRole && (
-              <div className="role-switch" role="tablist" aria-label="Select login access">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={loginRole === "candidate"}
-                  className={`role-chip ${loginRole === "candidate" ? "active" : ""}`}
-                  onClick={() => setLoginRole("candidate")}
-                >
-                  Candidate Login
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={loginRole === "admin"}
-                  className={`role-chip ${loginRole === "admin" ? "active" : ""}`}
-                  onClick={() => setLoginRole("admin")}
-                >
-                  Admin Panel Login
-                </button>
-              </div>
-            )}
-
             {loginRole === "admin" && (
               <p className="hint-text">Admin access is restricted to authorized admin accounts only.</p>
             )}
@@ -527,8 +610,35 @@ export default function Login({
               {isLoading ? "Signing in..." : modeContent.login.actionLabel}
             </button>
 
+            {loginRole !== "admin" && (
+              <div className="social-login-wrap" aria-label="Social login options">
+                <button
+                  type="button"
+                  className="social-login-btn google"
+                  onClick={() => handleSocialLogin("google")}
+                  aria-label="Continue with Google"
+                  title="Continue with Google"
+                >
+                  <span className="social-brand google" aria-hidden="true">
+                    G
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="social-login-btn facebook"
+                  onClick={() => handleSocialLogin("facebook")}
+                  aria-label="Continue with Facebook"
+                  title="Continue with Facebook"
+                >
+                  <span className="social-brand facebook" aria-hidden="true">
+                    f
+                  </span>
+                </button>
+              </div>
+            )}
+
             <div className="inline-actions">
-              {loginRole === "candidate" && (
+              {(loginRole === "candidate" || loginRole === "recruiter") && (
                 <button
                   type="button"
                   className="text-action"
@@ -552,23 +662,35 @@ export default function Login({
               >
                 Forgot password?
               </button>
-              <button
-                type="button"
-                className="text-action"
-                onClick={() => {
-                  setMode("change");
-                  setError("");
-                  setSuccess("");
-                }}
-              >
-                Change password
-              </button>
             </div>
           </form>
         )}
 
         {mode === "signup" && (
           <form className="login-form" onSubmit={handleSignup}>
+            {!lockLoginRole && (
+              <div className="role-switch" role="tablist" aria-label="Select account type">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={signupRole === "candidate"}
+                  className={`role-chip ${signupRole === "candidate" ? "active" : ""}`}
+                  onClick={() => setSignupRole("candidate")}
+                >
+                  Candidate
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={signupRole === "recruiter"}
+                  className={`role-chip ${signupRole === "recruiter" ? "active" : ""}`}
+                  onClick={() => setSignupRole("recruiter")}
+                >
+                  Recruiter
+                </button>
+              </div>
+            )}
+
             <div className="field-grid two-col">
               <div>
                 <label htmlFor="first_name">First Name</label>
@@ -758,98 +880,6 @@ export default function Login({
             >
               Back to sign in
             </button>
-
-            <button
-              type="button"
-              className="text-action align-left"
-              onClick={() => {
-                setMode("change");
-                setError("");
-                setSuccess("");
-              }}
-            >
-              Need to change password instead?
-            </button>
-          </form>
-        )}
-
-        {mode === "change" && (
-          <form className="login-form" onSubmit={handleChangePassword}>
-            <label htmlFor="old_password">Current Password</label>
-            <input
-              id="old_password"
-              type={showChangePasswords ? "text" : "password"}
-              placeholder="Current password"
-              value={changeForm.old_password}
-              onChange={(e) => setChangeForm({ ...changeForm, old_password: e.target.value })}
-              autoComplete="current-password"
-              required
-            />
-
-            <label htmlFor="new_password">New Password</label>
-            <input
-              id="new_password"
-              type={showChangePasswords ? "text" : "password"}
-              placeholder="New password"
-              value={changeForm.new_password}
-              onChange={(e) => setChangeForm({ ...changeForm, new_password: e.target.value })}
-              autoComplete="new-password"
-              required
-            />
-            <p className="hint-text">
-              Minimum 8 characters with uppercase, lowercase, number, and special symbol.
-            </p>
-
-            <label htmlFor="confirm_password">Confirm New Password</label>
-            <input
-              id="confirm_password"
-              type={showChangePasswords ? "text" : "password"}
-              placeholder="Confirm new password"
-              value={changeForm.confirm_password}
-              onChange={(e) =>
-                setChangeForm({ ...changeForm, confirm_password: e.target.value })
-              }
-              autoComplete="new-password"
-              required
-            />
-
-            <label className="checkbox-row" htmlFor="show-change-passwords">
-              <input
-                id="show-change-passwords"
-                type="checkbox"
-                checked={showChangePasswords}
-                onChange={(e) => setShowChangePasswords(e.target.checked)}
-              />
-              Show password fields
-            </label>
-
-            <button type="submit" disabled={isLoading}>
-              {isLoading ? "Updating..." : modeContent.change.actionLabel}
-            </button>
-
-            <button
-              type="button"
-              className="text-action align-left"
-              onClick={() => {
-                setMode("login");
-                setError("");
-                setSuccess("");
-              }}
-            >
-              Back to sign in
-            </button>
-
-            <button
-              type="button"
-              className="text-action align-left"
-              onClick={() => {
-                setMode("reset");
-                setError("");
-                setSuccess("");
-              }}
-            >
-              Forgot your current password?
-            </button>
           </form>
         )}
 
@@ -857,7 +887,8 @@ export default function Login({
           {/* <span>Protected authentication service</span>
           <span>Build 1.0.0</span> */}
         </footer>
-      </section>
+        </section>
+      </div>
     </main>
   );
 }

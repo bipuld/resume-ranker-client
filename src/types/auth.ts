@@ -23,7 +23,7 @@ export interface SignupPayload {
   last_name: string;
   phone: string;
   full_name: string;
-  role: string;  // Hidden field - automatically sent as 'candidate'
+  role: "candidate" | "recruiter";
 }
 
 export interface OtpVerifyPayload {
@@ -40,8 +40,10 @@ export interface ResetPasswordPayload {
 }
 
 export interface ChangePasswordPayload {
+  email?: string;
   old_password: string;
   new_password: string;
+  confirm_password: string;
 }
 
 export interface AuthResponse {
@@ -50,6 +52,21 @@ export interface AuthResponse {
   token?: string;
   message?: string;
   otp_required?: boolean;
+  has_company?: boolean;
+  hasCompany?: boolean;
+  is_verified?: boolean;
+  company_is_verified?: boolean;
+  user?: {
+    has_company?: boolean;
+    hasCompany?: boolean;
+    is_verified?: boolean;
+    company?: {
+      is_verified?: boolean;
+    } | null;
+  };
+  company?: {
+    is_verified?: boolean;
+  } | null;
 }
 
 export interface ApiMessageResponse {

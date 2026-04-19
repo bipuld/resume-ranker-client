@@ -1,23 +1,96 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import type { ReactElement } from "react";
 import AdminDashboard from "./pages/AdminDashboard";
+import CreateCompany from "./pages/CreateCompany";
 import Login from "./pages/Login";
-import { getAccessToken, getAuthRole } from "./utils/authSession";
+import PendingApproval from "./pages/PendingApproval";
+import RecruiterDashboard from "./pages/RecruiterDashboard";
+import RecruiterProfile from "./pages/RecruiterProfile";
+import {
+  getAccessToken,
+  getAuthRole,
+  getRecruiterCompanyStage,
+} from "./utils/authSession";
 import { ROUTES } from "./routes/paths";
 
 function RequireRoleAuth({
   role,
   children,
 }: {
-  role: "admin" | "recruiter";
+  role: "admin" | "recruiter" | "candidate";
   children: ReactElement;
 }) {
   const accessToken = getAccessToken();
   const currentRole = getAuthRole();
 
   if (!accessToken || currentRole !== role) {
-    const redirectPath = role === "admin" ? ROUTES.auth.adminLogin : ROUTES.auth.recruiterLogin;
+    const redirectPath =
+      role === "admin"
+        ? ROUTES.auth.adminLogin
+        : role === "candidate"
+          ? ROUTES.auth.candidateLogin
+          : ROUTES.auth.recruiterLogin;
     return <Navigate to={redirectPath} replace />;
+  }
+
+  return children;
+}
+
+function RequireRecruiterCompanyStage({
+  requiredStage,
+  children,
+}: {
+  requiredStage: "no-company" | "pending-approval" | "approved";
+  children: ReactElement;
+}) {
+  const accessToken = getAccessToken();
+  const role = getAuthRole();
+  const stage = getRecruiterCompanyStage() ?? "no-company";
+
+  if (!accessToken || role !== "recruiter") {
+    return <Navigate to={ROUTES.auth.recruiterLogin} replace />;
+  }
+
+  if (stage !== requiredStage) {
+    if (stage === "approved") {
+      return <Navigate to={ROUTES.dashboard.recruiter} replace />;
+    }
+
+    if (stage === "pending-approval") {
+      return <Navigate to={ROUTES.recruiter.pendingApproval} replace />;
+    }
+
+    return <Navigate to={ROUTES.recruiter.createCompany} replace />;
+  }
+
+  return children;
+}
+
+function RequireRecruiterCompanyStages({
+  allowedStages,
+  children,
+}: {
+  allowedStages: Array<"no-company" | "pending-approval" | "approved">;
+  children: ReactElement;
+}) {
+  const accessToken = getAccessToken();
+  const role = getAuthRole();
+  const stage = getRecruiterCompanyStage() ?? "no-company";
+
+  if (!accessToken || role !== "recruiter") {
+    return <Navigate to={ROUTES.auth.recruiterLogin} replace />;
+  }
+
+  if (!allowedStages.includes(stage)) {
+    if (stage === "approved") {
+      return <Navigate to={ROUTES.dashboard.recruiter} replace />;
+    }
+
+    if (stage === "pending-approval") {
+      return <Navigate to={ROUTES.recruiter.pendingApproval} replace />;
+    }
+
+    return <Navigate to={ROUTES.recruiter.createCompany} replace />;
   }
 
   return children;
@@ -26,9 +99,9 @@ function RequireRoleAuth({
 function App() {
   return (
     <Routes>
-      <Route path={ROUTES.root} element={<Navigate to={ROUTES.auth.candidateLogin} replace />} />
+      <Route path={ROUTES.root} element={<Navigate to={ROUTES.auth.login} replace />} />
       <Route
-        path={ROUTES.auth.candidateLogin}
+        path={ROUTES.auth.login}
         element={<Login defaultLoginRole="candidate" lockLoginRole />}
       />
       <Route
@@ -51,8 +124,48 @@ function App() {
           </RequireRoleAuth>
         }
       />
+      <Route
+        path={ROUTES.recruiter.createCompany}
+        element={
+          <RequireRecruiterCompanyStage requiredStage="no-company">
+            <CreateCompany />
+          </RequireRecruiterCompanyStage>
+        }
+      />
+      <Route
+        path={ROUTES.recruiter.editCompany}
+        element={
+          <RequireRecruiterCompanyStages allowedStages={["pending-approval", "approved"]}>
+            <CreateCompany />
+          </RequireRecruiterCompanyStages>
+        }
+      />
+      <Route
+        path={ROUTES.recruiter.pendingApproval}
+        element={
+          <RequireRecruiterCompanyStage requiredStage="pending-approval">
+            <PendingApproval />
+          </RequireRecruiterCompanyStage>
+        }
+      />
+      <Route
+        path={ROUTES.dashboard.recruiter}
+        element={
+          <RequireRecruiterCompanyStage requiredStage="approved">
+            <RecruiterDashboard />
+          </RequireRecruiterCompanyStage>
+        }
+      />
+      <Route
+        path={ROUTES.recruiter.profile}
+        element={
+          <RequireRoleAuth role="recruiter">
+            <RecruiterProfile />
+          </RequireRoleAuth>
+        }
+      />
       <Route path={ROUTES.legacy.adminDashboard} element={<Navigate to={ROUTES.dashboard.admin} replace />} />
-      <Route path="*" element={<Navigate to={ROUTES.auth.candidateLogin} replace />} />
+      <Route path="*" element={<Navigate to={ROUTES.auth.login} replace />} />
     </Routes>
   );
 }
