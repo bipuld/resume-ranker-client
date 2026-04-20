@@ -4,6 +4,7 @@ import type {
   CompanyDetailResponse,
   CompanyListResponse,
   CompanyMember,
+  CompanyMembershipDetailsResponse,
   CompanyResponse,
   CompanyStatusResponse,
   CreateCompanyPayload,
@@ -15,14 +16,14 @@ import type {
 
 const COMPANY_ENDPOINTS = {
   collection: "companies/",
+  membershipDetails: "member/details/",
   detail: (id: string | number) => `companies/${id}/`,
   adminCollection: "admin/companies/",
   adminDetail: (id: string | number) => `admin/companies/${id}/`,
   adminToggleVerification: (id: string | number) => `admin/companies/${id}/toggle_verification/`,
   inviteMember: (companyId: string | number) => `company/${companyId}/invite/`,
-  acceptInvite: (token: string) => `company/invite/${token}/accept/`,
   listMembers: (companyId: string | number) => `company/${companyId}/members/`,
-  updateMember: (memberId: string | number) => `company/member/${memberId}/`,
+  updateMember: (memberId: string | number) => `/company/member/${memberId}/`,
   removeMember: (memberId: string | number) => `company/member/${memberId}/delete/`,
   resendInvite: (memberId: string | number) => `company/member/${memberId}/resend-invite/`,
   listPendingInvites: (companyId: string | number) => `company/${companyId}/invites/`,
@@ -172,22 +173,56 @@ export const inviteCompanyMember = async (
   return res.data;
 };
 
-export const acceptCompanyInvite = async (token: string) => {
-  const res = await API.post<InviteActionResponse>(COMPANY_ENDPOINTS.acceptInvite(token));
-  return res.data;
+export const getCompanyMembers = async (companyId: string | number) => {
+  const res = await API.get<CompanyMember[] | { results?: CompanyMember[] }>(
+    COMPANY_ENDPOINTS.listMembers(companyId),
+  );
+
+  if (Array.isArray(res.data)) {
+    return res.data;
+  }
+
+  return Array.isArray(res.data?.results) ? res.data.results : [];
 };
 
-export const getCompanyMembers = async (companyId: string | number) => {
-  const res = await API.get<CompanyMember[]>(COMPANY_ENDPOINTS.listMembers(companyId));
-  return res.data;
+export const getCompanyMembershipDetails = async () => {
+  const res = await API.get<CompanyMembershipDetailsResponse>(COMPANY_ENDPOINTS.membershipDetails);
+  const memberships = res.data?.companies || [];
+
+  return memberships.map((membership) => {
+    return {
+      id: `${membership.id ?? ""}`,
+      role: membership.role || "recruiter",
+      designation: membership.designation || undefined,
+      is_active: membership.is_active,
+      invite_status: membership.invite_status,
+      is_owner: membership.is_owner,
+      company: membership.company
+        ? {
+            id: membership.company.id,
+            name: membership.company.name,
+          }
+        : undefined,
+    } as CompanyMember;
+  });
 };
 
 export const updateCompanyMemberRole = async (
   memberId: string | number,
   payload: UpdateCompanyMemberPayload,
 ) => {
-  const res = await API.patch<CompanyMember>(COMPANY_ENDPOINTS.updateMember(memberId), payload);
-  return res.data;
+  try {
+    const res = await API.patch<CompanyMember>(COMPANY_ENDPOINTS.updateMember(memberId), payload);
+    return res.data;
+  } catch (patchError) {
+    const status = (patchError as { response?: { status?: number } })?.response?.status;
+    if (status && status !== 400 && status !== 405) {
+      throw patchError;
+    }
+
+    const putRes = await API.put<CompanyMember>(COMPANY_ENDPOINTS.updateMember(memberId), payload);
+    return putRes.data;
+  }
 };
 
 export const removeCompanyMember = async (memberId: string | number) => {
@@ -201,8 +236,15 @@ export const resendCompanyInvite = async (memberId: string | number) => {
 };
 
 export const getCompanyPendingInvites = async (companyId: string | number) => {
-  const res = await API.get<CompanyInvite[]>(COMPANY_ENDPOINTS.listPendingInvites(companyId));
-  return res.data;
+  const res = await API.get<CompanyInvite[] | { results?: CompanyInvite[] }>(
+    COMPANY_ENDPOINTS.listPendingInvites(companyId),
+  );
+
+  if (Array.isArray(res.data)) {
+    return res.data;
+  }
+
+  return Array.isArray(res.data?.results) ? res.data.results : [];
 };
 
 export const cancelCompanyInvite = async (memberId: string | number) => {

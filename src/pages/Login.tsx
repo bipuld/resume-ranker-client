@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   loginUser,
   requestPasswordReset,
@@ -7,14 +7,18 @@ import {
   signupUser,
   verifyLoginOtp,
 } from "../api/auth";
+import type { AuthResponse } from "../types/auth";
 import { getCompanyStatus } from "../api/company";
 import ThemeToggle from "../components/ThemeToggle";
 import { ROUTES } from "../routes/paths";
 import {
+  clearInviteToken,
+  getInviteToken,
   getOrCreateDeviceToken,
   resolveRecruiterCompanyStage,
   saveAuthRole,
   saveAuthSession,
+  saveInviteToken,
   saveRecruiterCompanyStage,
 } from "../utils/authSession";
 import atsIcon from "../assets/ats-icon.svg";
@@ -27,9 +31,17 @@ type SignupRole = "candidate" | "recruiter";
 type LoginProps = {
   defaultLoginRole?: LoginRole;
   lockLoginRole?: boolean;
+  startMode?: AuthMode;
+};
+
+type OtpAuthContext = {
+  role: LoginRole;
+  password: string;
 };
 
 const OTP_DURATION_SECONDS = 60;
+const UUID_V4_OR_V1_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const getErrorMessage = (err: unknown, fallback: string) => {
   if (
@@ -127,10 +139,13 @@ const showcaseByRole = {
 export default function Login({
   defaultLoginRole = "candidate",
   lockLoginRole = false,
+  startMode = "login",
 }: LoginProps) {
   const navigate = useNavigate();
   const location = useLocation();
-  const [mode, setMode] = useState<AuthMode>("login");
+  const { inviteToken: inviteTokenFromParams } = useParams<{ inviteToken?: string }>();
+  const [mode, setMode] = useState<AuthMode>(startMode);
+  const [inviteToken, setInviteToken] = useState<string | null>(() => getInviteToken());
   const [loginRole, setLoginRole] = useState<LoginRole>(defaultLoginRole);
   const [signupRole, setSignupRole] = useState<SignupRole>(
     defaultLoginRole === "recruiter" ? "recruiter" : "candidate",
@@ -141,6 +156,37 @@ export default function Login({
       setLoginRole(defaultLoginRole);
     }
   }, [defaultLoginRole, lockLoginRole]);
+
+  useEffect(() => {
+    setMode(startMode);
+  }, [startMode]);
+
+  useEffect(() => {
+    const queryParams = new URLSearchParams(location.search);
+    const tokenFromQuery = queryParams.get("inviteToken") || queryParams.get("token");
+    const tokenFromPath = inviteTokenFromParams?.trim();
+    const rawToken = (tokenFromPath || tokenFromQuery || "").trim();
+
+    if (!rawToken) {
+      return;
+    }
+
+    const token = rawToken;
+
+    if (!UUID_V4_OR_V1_PATTERN.test(token)) {
+      setError("Invalid invitation link. Please ask the company owner to resend your invite.");
+      return;
+    }
+
+    saveInviteToken(token);
+    setInviteToken(token);
+
+    if (tokenFromPath) {
+      setMode("signup");
+      setError("");
+      setSuccess("Invitation detected. Complete signup to join your company workspace.");
+    }
+  }, [inviteTokenFromParams, location.search]);
 
   useEffect(() => {
     if (loginRole === "candidate" || loginRole === "recruiter") {
@@ -175,12 +221,65 @@ export default function Login({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [otpAuthContext, setOtpAuthContext] = useState<OtpAuthContext | null>(null);
+
+  const finalizeAuthenticatedFlow = async (resolvedRole: LoginRole, authData: AuthResponse) => {
+    saveAuthSession(authData);
+    saveAuthRole(resolvedRole);
+
+    if (resolvedRole === "admin") {
+      navigate(ROUTES.dashboard.admin);
+      return;
+    }
+
+    if (resolvedRole === "recruiter") {
+      clearInviteToken();
+      setInviteToken(null);
+
+      let stage = resolveRecruiterCompanyStage(authData);
+
+      try {
+        const companyStatus = await getCompanyStatus();
+        stage = resolveRecruiterCompanyStage(companyStatus);
+      } catch {
+        // Fall back to login response if the company lookup is unavailable.
+      }
+
+      saveRecruiterCompanyStage(stage);
+
+      if (stage === "no-company") {
+        navigate(ROUTES.recruiter.createCompany);
+        return;
+      }
+
+      if (stage === "pending-approval") {
+        navigate(ROUTES.recruiter.pendingApproval);
+        return;
+      }
+
+      navigate(ROUTES.dashboard.recruiter);
+      return;
+    }
+
+    setSuccess(authData.message || "Login successful.");
+  };
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const reason = params.get("reason");
+    const prefillEmail = params.get("email");
+    const invitedVerified = params.get("invited") === "verified";
     const sessionNotice = window.sessionStorage.getItem("ats.auth.notice");
     let noticeMessage = sessionNotice;
+
+    if (prefillEmail) {
+      setForm((prev) => ({ ...prev, email: prefillEmail.trim().toLowerCase() }));
+    }
+
+    if (invitedVerified) {
+      setSuccess("Invitation verified. Sign in to continue.");
+      setError("");
+    }
 
     if (sessionNotice) {
       try {
@@ -237,6 +336,7 @@ export default function Login({
     setIsLoading(true);
 
     try {
+      const resolvedLoginRole = lockLoginRole ? defaultLoginRole : loginRole;
       const res = await loginUser({
         email: form.email.trim().toLowerCase(),
         password: form.password,
@@ -244,50 +344,19 @@ export default function Login({
         device_type: deviceType,
         device_name: deviceName,
         device_id: deviceToken,
-        role: lockLoginRole ? defaultLoginRole : loginRole,
+        role: resolvedLoginRole,
+        invite_token: resolvedLoginRole === "recruiter" ? inviteToken || undefined : undefined,
       });
-
-      const resolvedRole = lockLoginRole ? defaultLoginRole : loginRole;
-      saveAuthSession(res);
-      saveAuthRole(resolvedRole);
-
-      if (resolvedRole === "admin") {
-        navigate(ROUTES.dashboard.admin);
-        return;
-      }
-
-      if (resolvedRole === "recruiter") {
-        let stage = resolveRecruiterCompanyStage(res);
-
-        try {
-          const companyStatus = await getCompanyStatus();
-          stage = resolveRecruiterCompanyStage(companyStatus);
-        } catch {
-          // Fall back to login response if the company lookup is unavailable.
-        }
-
-        saveRecruiterCompanyStage(stage);
-
-        if (stage === "no-company") {
-          navigate(ROUTES.recruiter.createCompany);
-          return;
-        }
-
-        if (stage === "pending-approval") {
-          navigate(ROUTES.recruiter.pendingApproval);
-          return;
-        }
-
-        navigate(ROUTES.dashboard.recruiter);
-        return;
-      }
-
-      setSuccess(res.message || "Login successful.");
+      await finalizeAuthenticatedFlow(resolvedLoginRole, res);
     } catch (err: unknown) {
       const loginError = getErrorMessage(err, "Login failed. Please check your email and password.");
 
       if (isUnverifiedEmailError(loginError)) {
         const loginEmail = form.email.trim().toLowerCase();
+        setOtpAuthContext({
+          role: lockLoginRole ? defaultLoginRole : loginRole,
+          password: form.password,
+        });
         setOtpForm({ email: loginEmail });
         setOtpDigits(["", "", "", "", "", ""]);
         setOtpTimeLeft(OTP_DURATION_SECONDS);
@@ -335,9 +404,14 @@ export default function Login({
         phone: signupForm.phone.trim(),
         full_name: fullName,
         role: resolvedSignupRole,
+        invite_token: resolvedSignupRole === "recruiter" ? inviteToken || undefined : undefined,
       });
 
       const signupEmail = signupForm.email.trim().toLowerCase();
+      setOtpAuthContext({
+        role: resolvedSignupRole,
+        password: signupForm.password,
+      });
       setOtpForm({ email: signupEmail });
       setOtpDigits(["", "", "", "", "", ""]);
       setOtpTimeLeft(OTP_DURATION_SECONDS);
@@ -370,15 +444,39 @@ export default function Login({
     setIsLoading(true);
 
     try {
+      const normalizedOtpEmail = otpForm.email.trim().toLowerCase();
       const res = await verifyLoginOtp({
-        email: otpForm.email.trim().toLowerCase(),
+        email: normalizedOtpEmail,
         otp: otpCode,
       });
 
-      setSuccess(res.message || "OTP verified successfully. You can now sign in.");
-      setMode("login");
-      setForm({ email: otpForm.email.trim().toLowerCase(), password: "" });
+      const roleForAutoLogin = otpAuthContext?.role || (inviteToken ? "recruiter" : loginRole);
+      const passwordForAutoLogin =
+        otpAuthContext?.password || signupForm.password || form.password;
+
+      if (!passwordForAutoLogin) {
+        setSuccess(res.message || "OTP verified successfully. You can now sign in.");
+        setMode("login");
+        setForm({ email: normalizedOtpEmail, password: "" });
+        setOtpDigits(["", "", "", "", "", ""]);
+        setOtpAuthContext(null);
+        return;
+      }
+
+      const loginAfterOtp = await loginUser({
+        email: normalizedOtpEmail,
+        password: passwordForAutoLogin,
+        fcm_token: deviceToken,
+        device_type: deviceType,
+        device_name: deviceName,
+        device_id: deviceToken,
+        role: roleForAutoLogin,
+        invite_token: roleForAutoLogin === "recruiter" ? inviteToken || undefined : undefined,
+      });
+
+      setOtpAuthContext(null);
       setOtpDigits(["", "", "", "", "", ""]);
+      await finalizeAuthenticatedFlow(roleForAutoLogin, loginAfterOtp);
     } catch (err: unknown) {
       setError(getErrorMessage(err, "OTP verification failed. Please try again."));
     } finally {
@@ -668,6 +766,12 @@ export default function Login({
 
         {mode === "signup" && (
           <form className="login-form" onSubmit={handleSignup}>
+            {inviteToken && (
+              <p className="hint-text">
+                You are signing up with an invitation. This account will be linked to your company team.
+              </p>
+            )}
+
             {!lockLoginRole && (
               <div className="role-switch" role="tablist" aria-label="Select account type">
                 <button

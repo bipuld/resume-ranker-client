@@ -2,6 +2,8 @@ export const ROUTES = {
   root: "/",
   auth: {
     login: "/login",
+    signup: "/signup",
+    inviteSignup: "/signup/:inviteToken",
     candidateLogin: "/login",
     adminLogin: "/admin/login",
     recruiterLogin: "/recruiter/login",

@@ -105,6 +105,14 @@ function App() {
         element={<Login defaultLoginRole="candidate" lockLoginRole />}
       />
       <Route
+        path={ROUTES.auth.signup}
+        element={<Login defaultLoginRole="candidate" startMode="signup" />}
+      />
+      <Route
+        path={ROUTES.auth.inviteSignup}
+        element={<Login defaultLoginRole="recruiter" lockLoginRole startMode="signup" />}
+      />
+      <Route
         path={ROUTES.auth.adminLogin}
         element={<Login defaultLoginRole="admin" lockLoginRole />}
       />

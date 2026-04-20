@@ -1,10 +1,14 @@
 import axios from "axios";
 import { ROUTES } from "../routes/paths";
-import { clearAuthSession, getAccessToken, getRefreshToken, saveAuthSession } from "../utils/authSession";
+import {
+  clearAuthSession,
+  getAccessToken,
+  getRefreshToken,
+  saveAuthSession,
+  setSessionExpiredNotice,
+} from "../utils/authSession";
 
 const DEFAULT_BASE_URL = "http://localhost:8000/api/v1/";
-const SESSION_NOTICE_KEY = "ats.auth.notice";
-const SESSION_NOTICE_TTL_MS = 15 * 60 * 1000;
 const REFRESH_ENDPOINTS = ["user/token/refresh/", "token/refresh/", "user/refresh/"];
 
 let refreshPromise: Promise<string | null> | null = null;
@@ -43,6 +47,16 @@ API.interceptors.request.use((config) => {
   const token = getAccessToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
+  } else if (typeof window !== "undefined") {
+    const hasSessionExpiryNotice = Boolean(window.sessionStorage.getItem("ats.auth.notice"));
+    const isLoginRoute =
+      window.location.pathname === ROUTES.auth.login ||
+      window.location.pathname === ROUTES.auth.recruiterLogin ||
+      window.location.pathname === ROUTES.auth.adminLogin;
+
+    if (hasSessionExpiryNotice && !isLoginRoute) {
+      window.location.assign(`${ROUTES.auth.login}?reason=session-expired`);
+    }
   }
   return config;
 });
@@ -130,16 +144,9 @@ API.interceptors.response.use(
         message.toLowerCase().includes("token_not_valid"))
     ) {
       clearAuthSession();
+      setSessionExpiredNotice();
 
       if (typeof window !== "undefined") {
-        window.sessionStorage.setItem(
-          SESSION_NOTICE_KEY,
-          JSON.stringify({
-            message: "Your session expired. Please sign in again.",
-            expiresAt: Date.now() + SESSION_NOTICE_TTL_MS,
-          }),
-        );
-
         if (window.location.pathname !== ROUTES.auth.login) {
           window.location.assign(`${ROUTES.auth.login}?reason=session-expired`);
         }

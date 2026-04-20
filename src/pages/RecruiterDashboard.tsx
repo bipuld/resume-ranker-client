@@ -14,14 +14,26 @@ import {
   Users,
   CheckCircle,
   AlertCircle,
+  ShieldCheck,
 } from "lucide-react";
-import { getCompanyStatus, inviteCompanyMember } from "../api/company";
+import {
+  getCompanyMembershipDetails,
+  getCompanyMembers,
+  getCompanyStatus,
+  inviteCompanyMember,
+  updateCompanyMemberRole,
+} from "../api/company";
 import { getRecruiterNotifications } from "../api/notifications";
 import { getProfile } from "../api/profile";
 import { ROUTES } from "../routes/paths";
 import { clearAuthSession } from "../utils/authSession";
 import ThemeToggle from "../components/ThemeToggle";
 import type { RecruiterNotification } from "../types/notifications";
+import type {
+  CompanyMember,
+  CompanyMemberPermissions,
+  CompanyMemberRole,
+} from "../types/company";
 
 type CompanyInfo = {
   id?: string | number;
@@ -36,11 +48,120 @@ type CompanyInfo = {
 type RecruiterIdentity = {
   displayName: string;
   profileImage: string;
+  email: string;
+  userId: string;
 };
 
 type InviteMemberState = {
   email: string;
-  role: "hr" | "recruiter" | "interviewer";
+  role: "admin" | "hr" | "recruiter" | "interviewer";
+};
+
+const DEFAULT_MEMBER_PERMISSIONS: CompanyMemberPermissions = {
+  can_post_jobs: true,
+  can_edit_jobs: false,
+  can_delete_jobs: false,
+  can_view_applicants: true,
+  can_shortlist_candidates: true,
+  can_manage_team: false,
+};
+
+const permissionFields: Array<{ key: keyof CompanyMemberPermissions; label: string }> = [
+  { key: "can_post_jobs", label: "Post jobs" },
+  { key: "can_edit_jobs", label: "Edit jobs" },
+  { key: "can_delete_jobs", label: "Delete jobs" },
+  { key: "can_view_applicants", label: "View applicants" },
+  { key: "can_shortlist_candidates", label: "Shortlist candidates" },
+  { key: "can_manage_team", label: "Manage team" },
+];
+
+const editableRoles: CompanyMemberRole[] = ["hr", "recruiter", "interviewer"];
+
+const roleTitleByCode: Record<CompanyMemberRole, string> = {
+  owner: "Owner",
+  admin: "Admin",
+  hr: "HR",
+  recruiter: "Recruiter",
+  interviewer: "Interviewer",
+};
+
+const normalizeEmail = (value?: string) => (value || "").trim().toLowerCase();
+
+const getMemberCompanyId = (member: CompanyMember) => {
+  const value = member.company;
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  if (typeof value === "string" || typeof value === "number") {
+    return `${value}`;
+  }
+
+  if (typeof value === "object" && value !== null && "id" in value) {
+    const id = (value as { id?: string | number }).id;
+    return id === undefined || id === null ? "" : `${id}`;
+  }
+
+  return "";
+};
+
+const getMemberUserId = (member: CompanyMember) => {
+  const value = member.user;
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  if (typeof value === "string" || typeof value === "number") {
+    return `${value}`;
+  }
+
+  if (typeof value === "object" && value !== null && "id" in value) {
+    const id = (value as { id?: string | number }).id;
+    return id === undefined || id === null ? "" : `${id}`;
+  }
+
+  return "";
+};
+
+const withMemberPermissionDefaults = (member: CompanyMember): CompanyMember => {
+  const normalizedRole = `${member.role || "recruiter"}`.toLowerCase();
+  const role: CompanyMemberRole =
+    normalizedRole === "owner" ||
+    normalizedRole === "admin" ||
+    normalizedRole === "hr" ||
+    normalizedRole === "recruiter" ||
+    normalizedRole === "interviewer"
+      ? (normalizedRole as CompanyMemberRole)
+      : "recruiter";
+
+  return {
+    ...member,
+    role,
+    can_post_jobs:
+      typeof member.can_post_jobs === "boolean"
+        ? member.can_post_jobs
+        : DEFAULT_MEMBER_PERMISSIONS.can_post_jobs,
+    can_edit_jobs:
+      typeof member.can_edit_jobs === "boolean"
+        ? member.can_edit_jobs
+        : DEFAULT_MEMBER_PERMISSIONS.can_edit_jobs,
+    can_delete_jobs:
+      typeof member.can_delete_jobs === "boolean"
+        ? member.can_delete_jobs
+        : DEFAULT_MEMBER_PERMISSIONS.can_delete_jobs,
+    can_view_applicants:
+      typeof member.can_view_applicants === "boolean"
+        ? member.can_view_applicants
+        : DEFAULT_MEMBER_PERMISSIONS.can_view_applicants,
+    can_shortlist_candidates:
+      typeof member.can_shortlist_candidates === "boolean"
+        ? member.can_shortlist_candidates
+        : DEFAULT_MEMBER_PERMISSIONS.can_shortlist_candidates,
+    can_manage_team:
+      typeof member.can_manage_team === "boolean"
+        ? member.can_manage_team
+        : DEFAULT_MEMBER_PERMISSIONS.can_manage_team,
+  };
 };
 
 const workflowCards = [
@@ -83,6 +204,8 @@ export default function RecruiterDashboard() {
   const [identity, setIdentity] = useState<RecruiterIdentity>({
     displayName: "Recruiter",
     profileImage: "",
+    email: "",
+    userId: "",
   });
   const [isLoading, setIsLoading] = useState(false);
   const [alertsOpen, setAlertsOpen] = useState(false);
@@ -95,6 +218,14 @@ export default function RecruiterDashboard() {
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteMessage, setInviteMessage] = useState("");
   const [inviteError, setInviteError] = useState("");
+  const [members, setMembers] = useState<CompanyMember[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [membersError, setMembersError] = useState("");
+  const [memberUpdateMessage, setMemberUpdateMessage] = useState("");
+  const [memberUpdateError, setMemberUpdateError] = useState("");
+  const [savingMemberId, setSavingMemberId] = useState<string | null>(null);
+  const [isCompanyOwner, setIsCompanyOwner] = useState(false);
+  const [currentMembershipRole, setCurrentMembershipRole] = useState<CompanyMemberRole | null>(null);
   const [stats, setStats] = useState({
     openJobs: 0,
     totalApplications: 0,
@@ -123,9 +254,80 @@ export default function RecruiterDashboard() {
     }
   }, []);
 
+  const loadCompanyMembers = useCallback(async (companyId: string | number) => {
+    setMembersLoading(true);
+    setMembersError("");
+
+    try {
+      const items = await getCompanyMembers(companyId);
+      setMembers(items.map(withMemberPermissionDefaults));
+    } catch (err) {
+      const message =
+        (err as { response?: { data?: { message?: string; detail?: string } } })?.response?.data
+          ?.message ||
+        (err as { response?: { data?: { message?: string; detail?: string } } })?.response?.data
+          ?.detail ||
+        "Could not load members right now.";
+      setMembersError(message);
+    } finally {
+      setMembersLoading(false);
+    }
+  }, []);
+
+  const loadCurrentMembership = useCallback(async (companyId: string | number, companyName?: string) => {
+    try {
+      const memberships = await getCompanyMembershipDetails();
+      const targetCompanyId = `${companyId}`;
+      const targetCompanyName = (companyName || "").trim().toLowerCase();
+
+      const currentMembership = memberships.find((membership) => {
+        if (membership.is_active === false) {
+          return false;
+        }
+
+        const membershipCompanyId = getMemberCompanyId(membership);
+        const membershipCompanyName =
+          typeof membership.company === "object" && membership.company !== null && "name" in membership.company
+            ? `${(membership.company as { name?: string }).name || ""}`.trim().toLowerCase()
+            : "";
+
+        if (membershipCompanyId && membershipCompanyId === targetCompanyId) {
+          return true;
+        }
+
+        if (targetCompanyName && membershipCompanyName && membershipCompanyName === targetCompanyName) {
+          return true;
+        }
+
+        return false;
+      });
+
+      const selectedMembership = currentMembership || (memberships.length === 1 ? memberships[0] : undefined);
+
+      const currentRole = selectedMembership?.role;
+      setCurrentMembershipRole(
+        currentRole === "owner" ||
+          currentRole === "admin" ||
+          currentRole === "hr" ||
+          currentRole === "recruiter" ||
+          currentRole === "interviewer"
+          ? currentRole
+          : null,
+      );
+
+      const isOwner = Boolean(selectedMembership?.is_owner) || currentRole === "owner";
+      setIsCompanyOwner(isOwner);
+    } catch {
+      setIsCompanyOwner(false);
+      setCurrentMembershipRole(null);
+    }
+  }, []);
+
   const loadProfile = useCallback(async () => {
     try {
       const profile = await getProfile();
+      const profileUser =
+        typeof profile.user === "object" && profile.user !== null ? profile.user : undefined;
       const fullName =
         profile.full_name ||
         [profile.first_name, profile.middle_name, profile.last_name].filter(Boolean).join(" ").trim() ||
@@ -142,6 +344,8 @@ export default function RecruiterDashboard() {
       setIdentity({
         displayName: fullName,
         profileImage,
+        email: normalizeEmail(profileUser?.email || profile.email),
+        userId: `${profileUser?.id ?? profile.id ?? ""}`,
       });
     } catch {
       // Keep dashboard usable with fallback identity if profile lookup fails.
@@ -161,6 +365,46 @@ export default function RecruiterDashboard() {
   useEffect(() => {
     loadCompanyInfo();
   }, [loadCompanyInfo]);
+
+  useEffect(() => {
+    if (!company?.id) {
+      return;
+    }
+
+    loadCompanyMembers(company.id);
+    loadCurrentMembership(company.id, company.name);
+  }, [company?.id, loadCompanyMembers, loadCurrentMembership]);
+
+  useEffect(() => {
+    if (currentMembershipRole || members.length === 0) {
+      return;
+    }
+
+    const currentMember = members.find((member) => {
+      const memberEmail = normalizeEmail(member.email || member.invite_email);
+      const memberUserId = getMemberUserId(member);
+      return (
+        (identity.email && memberEmail && identity.email === memberEmail) ||
+        (identity.userId && memberUserId && identity.userId === memberUserId)
+      );
+    });
+
+    if (!currentMember) {
+      return;
+    }
+
+    const role = currentMember.role;
+    if (
+      role === "owner" ||
+      role === "admin" ||
+      role === "hr" ||
+      role === "recruiter" ||
+      role === "interviewer"
+    ) {
+      setCurrentMembershipRole(role);
+      setIsCompanyOwner(role === "owner");
+    }
+  }, [currentMembershipRole, members, identity.email, identity.userId]);
 
   useEffect(() => {
     loadProfile();
@@ -200,6 +444,37 @@ export default function RecruiterDashboard() {
     return "Good Evening";
   }, [currentTime]);
 
+  const teamMembersExcludingSelf = useMemo(() => {
+    const withoutSelf = members.filter((member) => {
+      const memberEmail = normalizeEmail(member.email || member.invite_email);
+      const memberUserId = getMemberUserId(member);
+
+      const sameEmail = Boolean(identity.email && memberEmail && identity.email === memberEmail);
+      const sameUserId = Boolean(identity.userId && memberUserId && identity.userId === memberUserId);
+
+      return !sameEmail && !sameUserId;
+    });
+
+    if (isCompanyOwner) {
+      return withoutSelf;
+    }
+
+    return withoutSelf.filter((member) => member.is_approved === true);
+  }, [members, identity.email, identity.userId, isCompanyOwner]);
+
+  const approvedTeamMembers = useMemo(
+    () => teamMembersExcludingSelf.filter((member) => member.is_approved === true),
+    [teamMembersExcludingSelf],
+  );
+
+  const pendingApprovalMembers = useMemo(() => {
+    if (!isCompanyOwner) {
+      return [];
+    }
+
+    return teamMembersExcludingSelf.filter((member) => member.is_approved !== true);
+  }, [teamMembersExcludingSelf, isCompanyOwner]);
+
   const handleLogout = () => {
     clearAuthSession();
     navigate(ROUTES.auth.login, { replace: true });
@@ -235,6 +510,7 @@ export default function RecruiterDashboard() {
 
       setInviteMember({ email: "", role: "recruiter" });
       setInviteMessage(res.message || `Invite sent to ${email}.`);
+      await loadCompanyMembers(company.id);
     } catch (err) {
       const message =
         (err as { response?: { data?: { message?: string; detail?: string } } })?.response?.data
@@ -245,6 +521,94 @@ export default function RecruiterDashboard() {
       setInviteError(message);
     } finally {
       setInviteLoading(false);
+    }
+  };
+
+  const handleMemberRoleChange = (memberId: string, nextRole: CompanyMemberRole) => {
+    setMembers((prev) =>
+      prev.map((member) => (`${member.id}` === memberId ? { ...member, role: nextRole } : member)),
+    );
+  };
+
+  const handleMemberPermissionToggle = (
+    memberId: string,
+    key: keyof CompanyMemberPermissions,
+    checked: boolean,
+  ) => {
+    setMembers((prev) =>
+      prev.map((member) =>
+        `${member.id}` === memberId
+          ? {
+              ...member,
+              [key]: checked,
+            }
+          : member,
+      ),
+    );
+  };
+
+  const handleSaveMemberAccess = async (member: CompanyMember) => {
+    const memberId = `${member.id}`;
+
+    if (!isCompanyOwner) {
+      setMemberUpdateError("Only company owner can update member access.");
+      return;
+    }
+
+    if (!member.is_approved) {
+      setMemberUpdateError("You can edit permissions only after member approval.");
+      return;
+    }
+
+    if (member.role === "owner") {
+      setMemberUpdateError("Owner access cannot be edited from this panel.");
+      return;
+    }
+
+    setSavingMemberId(memberId);
+    setMemberUpdateMessage("");
+    setMemberUpdateError("");
+
+    try {
+      const updated = await updateCompanyMemberRole(member.id, {
+        role: member.role,
+        can_post_jobs: Boolean(member.can_post_jobs),
+        can_edit_jobs: Boolean(member.can_edit_jobs),
+        can_delete_jobs: Boolean(member.can_delete_jobs),
+        can_view_applicants: Boolean(member.can_view_applicants),
+        can_shortlist_candidates: Boolean(member.can_shortlist_candidates),
+        can_manage_team: Boolean(member.can_manage_team),
+      });
+
+      setMembers((prev) =>
+        prev.map((item) =>
+          `${item.id}` === `${member.id}` ? withMemberPermissionDefaults(updated) : item,
+        ),
+      );
+      setMemberUpdateMessage(`Updated access for ${member.invite_email || member.email || "member"}.`);
+    } catch (err) {
+      const errorData = (err as { response?: { data?: unknown } })?.response?.data;
+      const message =
+        (errorData as { message?: string })?.message ||
+        (errorData as { detail?: string })?.detail ||
+        (typeof errorData === "object" && errorData
+          ? Object.entries(errorData as Record<string, unknown>)
+              .map(([key, value]) => {
+                if (Array.isArray(value)) {
+                  return `${key}: ${value.join(", ")}`;
+                }
+                if (typeof value === "string") {
+                  return `${key}: ${value}`;
+                }
+                return "";
+              })
+              .filter(Boolean)
+              .join(" | ")
+          : "") ||
+        "Could not update member access right now.";
+      setMemberUpdateError(message);
+    } finally {
+      setSavingMemberId(null);
     }
   };
 
@@ -278,6 +642,7 @@ export default function RecruiterDashboard() {
   }, [company?.is_verified, company?.name]);
 
   const activeAlerts = alerts.length > 0 ? alerts : fallbackAlerts;
+  const membershipRoleTitle = currentMembershipRole ? roleTitleByCode[currentMembershipRole] : "Member";
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-gradient-to-br from-slate-100 via-cyan-50 to-blue-100 text-slate-900 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 dark:text-slate-100">
@@ -294,7 +659,7 @@ export default function RecruiterDashboard() {
             <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h1 className="text-4xl md:text-5xl font-bold bg-gradient-to-r from-cyan-400 via-blue-400 to-cyan-500 bg-clip-text text-transparent mb-2">
-                  {greeting}, Recruiter
+                  {greeting}, {membershipRoleTitle}
                 </h1>
                 <p className="text-slate-700 dark:text-slate-400 text-lg">
                   {company?.name ? `Manage hiring for ${company.name}` : "Welcome back to your workspace"}
@@ -363,7 +728,7 @@ export default function RecruiterDashboard() {
                   )}
                   <div className="text-left">
                     <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{identity.displayName}</p>
-                    <p className="text-xs text-slate-600 dark:text-slate-400">Recruiter</p>
+                    <p className="text-xs text-slate-600 dark:text-slate-400">{membershipRoleTitle}</p>
                   </div>
                 </button>
 
@@ -414,13 +779,15 @@ export default function RecruiterDashboard() {
                     )}
                   </div>
                 </div>
-                <button
-                  onClick={() => navigate(ROUTES.recruiter.editCompany, { state: { fromDashboard: true } })}
-                  className="p-3 rounded-xl bg-white/70 border border-slate-200 text-slate-600 hover:bg-white transition-all duration-200 dark:bg-white/10 dark:border-white/20 dark:text-slate-300 dark:hover:bg-white/20"
-                  title="Update company information"
-                >
-                  <Settings size={20} />
-                </button>
+                {isCompanyOwner && (
+                  <button
+                    onClick={() => navigate(ROUTES.recruiter.editCompany, { state: { fromDashboard: true } })}
+                    className="p-3 rounded-xl bg-white/70 border border-slate-200 text-slate-600 hover:bg-white transition-all duration-200 dark:bg-white/10 dark:border-white/20 dark:text-slate-300 dark:hover:bg-white/20"
+                    title="Update company information"
+                  >
+                    <Settings size={20} />
+                  </button>
+                )}
               </div>
               {company.description && (
                 <p className="text-slate-700 dark:text-slate-300 mb-4 leading-relaxed">{company.description}</p>
@@ -430,20 +797,23 @@ export default function RecruiterDashboard() {
                   Visit website →
                 </a>
               )}
-              <div className="mt-4">
-                <button
-                  type="button"
-                  onClick={() => navigate(ROUTES.recruiter.editCompany, { state: { fromDashboard: true } })}
-                  className="inline-flex items-center gap-2 rounded-xl border border-cyan-300 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-800 transition hover:bg-cyan-100 dark:border-cyan-500/40 dark:bg-cyan-500/10 dark:text-cyan-300 dark:hover:bg-cyan-500/20"
-                >
-                  <Settings size={16} />
-                  Edit company profile and logo
-                </button>
-              </div>
+              {isCompanyOwner && (
+                <div className="mt-4">
+                  <button
+                    type="button"
+                    onClick={() => navigate(ROUTES.recruiter.editCompany, { state: { fromDashboard: true } })}
+                    className="inline-flex items-center gap-2 rounded-xl border border-cyan-300 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-800 transition hover:bg-cyan-100 dark:border-cyan-500/40 dark:bg-cyan-500/10 dark:text-cyan-300 dark:hover:bg-cyan-500/20"
+                  >
+                    <Settings size={16} />
+                    Edit company profile and logo
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
           {/* Invite Member */}
+          {isCompanyOwner && (
           <div className="mb-8 rounded-2xl border border-slate-200 bg-white/80 p-6 shadow-xl backdrop-blur-xl transition-all duration-300 dark:border-white/10 dark:bg-white/5 dark:shadow-2xl">
             <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
               <div>
@@ -496,6 +866,7 @@ export default function RecruiterDashboard() {
                   }
                   className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-cyan-400 focus:ring-4 focus:ring-cyan-500/10 dark:border-white/10 dark:bg-slate-950/40 dark:text-white"
                 >
+                  <option value="admin">Admin</option>
                   <option value="hr">HR</option>
                   <option value="recruiter">Recruiter</option>
                   <option value="interviewer">Interviewer</option>
@@ -525,6 +896,220 @@ export default function RecruiterDashboard() {
               </div>
             )}
           </div>
+          )}
+
+          <div className="mb-8 rounded-2xl border border-slate-200 bg-white/80 p-6 shadow-xl backdrop-blur-xl transition-all duration-300 dark:border-white/10 dark:bg-white/5 dark:shadow-2xl">
+            <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700 dark:text-cyan-300">
+                  {isCompanyOwner ? "Owner Controls" : "Team View"}
+                </p>
+                <h2 className="mt-1 text-2xl font-bold text-slate-900 dark:text-white">
+                  Team Members and Permissions
+                </h2>
+                <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+                  {isCompanyOwner
+                    ? "After approval, update each member role and permissions individually."
+                    : "You can view your company team. Only owner can invite or edit access."}
+                </p>
+                <p className="mt-2 text-xs font-medium text-slate-500 dark:text-slate-400">
+                  Your own membership row is excluded from this list.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => company?.id && loadCompanyMembers(company.id)}
+                disabled={membersLoading || !company?.id}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+              >
+                <RefreshCw size={14} className={membersLoading ? "animate-spin" : ""} />
+                Refresh members
+              </button>
+            </div>
+
+            {(memberUpdateError || memberUpdateMessage || membersError) && (
+              <div
+                className={`mb-4 rounded-2xl border px-4 py-3 text-sm ${
+                  memberUpdateError || membersError
+                    ? "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200"
+                    : "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200"
+                }`}
+              >
+                {memberUpdateError || membersError || memberUpdateMessage}
+              </div>
+            )}
+
+            {membersLoading ? (
+              <p className="text-sm text-slate-600 dark:text-slate-400">Loading team members...</p>
+            ) : approvedTeamMembers.length === 0 ? (
+              <p className="text-sm text-slate-600 dark:text-slate-400">
+                No approved team members found yet.
+              </p>
+            ) : (
+              <div className="space-y-4">
+                {approvedTeamMembers.map((member) => {
+                  const isOwner = member.role === "owner";
+                  const canEdit = isCompanyOwner && Boolean(member.is_approved) && !isOwner;
+                  const canViewPermissions = isCompanyOwner;
+                  const memberId = `${member.id}`;
+                  const memberLayoutClass = canViewPermissions
+                    ? "grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)_auto] lg:items-start"
+                    : "grid gap-4 lg:grid-cols-[220px_auto] lg:items-start";
+                  return (
+                    <article
+                      key={member.id}
+                      className="rounded-2xl border border-slate-200 bg-white/90 p-4 dark:border-slate-700 dark:bg-slate-900/60"
+                    >
+                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                            {member.invite_email || member.email || "Member"}
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400">
+                            Member status: {member.is_approved ? "Approved" : "Pending approval"}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {isOwner && (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-indigo-300 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700 dark:border-indigo-500/40 dark:bg-indigo-500/10 dark:text-indigo-300">
+                              <ShieldCheck size={12} /> Owner
+                            </span>
+                          )}
+                          {!member.is_approved && (
+                            <span className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+                              Waiting for approval
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className={memberLayoutClass}>
+                        <div>
+                          <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-300">
+                            Role
+                          </label>
+                          {isCompanyOwner ? (
+                            <select
+                              value={member.role}
+                              onChange={(event) =>
+                                handleMemberRoleChange(memberId, event.target.value as CompanyMemberRole)
+                              }
+                              disabled={!canEdit}
+                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-cyan-400 focus:ring-4 focus:ring-cyan-500/10 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950/40 dark:text-white"
+                            >
+                              {isOwner ? (
+                                <option value="owner">Owner</option>
+                              ) : (
+                                editableRoles.map((role) => (
+                                  <option key={role} value={role}>
+                                    {role.toUpperCase()}
+                                  </option>
+                                ))
+                              )}
+                            </select>
+                          ) : (
+                            <div className="inline-flex items-center rounded-xl border border-slate-300 bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                              {roleTitleByCode[member.role] || "Member"}
+                            </div>
+                          )}
+                        </div>
+
+                        {canViewPermissions ? (
+                          <div>
+                            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-600 dark:text-slate-300">
+                              Permissions
+                            </p>
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              {permissionFields.map((field) => (
+                                <label
+                                  key={`${member.id}-${field.key}`}
+                                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-200"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(member[field.key])}
+                                    disabled={!canEdit}
+                                    onChange={(event) =>
+                                      handleMemberPermissionToggle(memberId, field.key, event.target.checked)
+                                    }
+                                    className="h-4 w-4 rounded border-slate-300 text-cyan-600 focus:ring-cyan-500"
+                                  />
+                                  {field.label}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+
+                        <div className="flex items-end">
+                          {isCompanyOwner ? (
+                            <button
+                              type="button"
+                              disabled={!canEdit || savingMemberId === memberId}
+                              onClick={() => handleSaveMemberAccess(member)}
+                              className="inline-flex w-full items-center justify-center rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-cyan-500/20 transition hover:from-cyan-600 hover:to-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {savingMemberId === memberId ? "Saving..." : "Save access"}
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {isCompanyOwner && (
+            <div className="mb-8 rounded-2xl border border-slate-200 bg-white/80 p-6 shadow-xl backdrop-blur-xl transition-all duration-300 dark:border-white/10 dark:bg-white/5 dark:shadow-2xl">
+              <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700 dark:text-amber-300">
+                    Owner Controls
+                  </p>
+                  <h2 className="mt-1 text-2xl font-bold text-slate-900 dark:text-white">
+                    Pending Member Approvals
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+                    Members waiting for approval are listed here separately.
+                  </p>
+                </div>
+              </div>
+
+              {pendingApprovalMembers.length === 0 ? (
+                <p className="text-sm text-slate-600 dark:text-slate-400">No pending member approvals.</p>
+              ) : (
+                <div className="space-y-3">
+                  {pendingApprovalMembers.map((member) => (
+                    <article
+                      key={`pending-${member.id}`}
+                      className="rounded-xl border border-amber-300/50 bg-amber-50/60 px-4 py-3 dark:border-amber-500/30 dark:bg-amber-500/10"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                            {member.invite_email || member.email || "Pending member"}
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400">
+                            Member status: Pending approval
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+                            Waiting for approval
+                          </span>
+                          <span className="rounded-full border border-cyan-300 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-800 dark:border-cyan-500/40 dark:bg-cyan-500/10 dark:text-cyan-300">
+                            {roleTitleByCode[member.role] || "Member"}
+                          </span>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Stats Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">

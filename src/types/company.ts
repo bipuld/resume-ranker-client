@@ -84,7 +84,16 @@ export interface CompanyStatusResponse {
 
 export type UpdateCompanyPayload = Partial<CreateCompanyPayload>;
 
-export type CompanyMemberRole = "owner" | "hr" | "recruiter" | "interviewer";
+export type CompanyMemberRole = "owner" | "admin" | "hr" | "recruiter" | "interviewer";
+
+export interface CompanyMemberPermissions {
+  can_post_jobs: boolean;
+  can_edit_jobs: boolean;
+  can_delete_jobs: boolean;
+  can_view_applicants: boolean;
+  can_shortlist_candidates: boolean;
+  can_manage_team: boolean;
+}
 
 export interface InviteCompanyMemberPayload {
   email: string;
@@ -92,26 +101,76 @@ export interface InviteCompanyMemberPayload {
 }
 
 export interface UpdateCompanyMemberPayload {
-  role: CompanyMemberRole;
+  role?: CompanyMemberRole;
+  designation?: string;
+  can_post_jobs?: boolean;
+  can_edit_jobs?: boolean;
+  can_delete_jobs?: boolean;
+  can_view_applicants?: boolean;
+  can_shortlist_candidates?: boolean;
+  can_manage_team?: boolean;
 }
 
 export interface CompanyMember {
   id: string;
-  company?: string;
-  user?: string;
+  company?: string | number | { id?: string | number; name?: string };
+  user?: string | number | { id?: string | number; email?: string };
   email?: string;
+  invite_email?: string;
   role: CompanyMemberRole;
+  invite_status?: string;
+  is_owner?: boolean;
+  is_approved?: boolean;
   is_active?: boolean;
+  designation?: string;
+  can_post_jobs?: boolean;
+  can_edit_jobs?: boolean;
+  can_delete_jobs?: boolean;
+  can_view_applicants?: boolean;
+  can_shortlist_candidates?: boolean;
+  can_manage_team?: boolean;
   created_at?: string;
   updated_at?: string;
   [key: string]: unknown;
 }
 
+export interface CompanyMembershipDetailsUser {
+  id?: string | number;
+  email?: string;
+}
+
+export interface CompanyMembershipDetailsCompany {
+  id?: string | number;
+  name?: string;
+  location?: string | null;
+  industry?: string | null;
+  size?: string | null;
+  is_verified?: boolean;
+  logo?: string | null;
+}
+
+export interface CompanyMembershipDetailsItem {
+  id?: string | number;
+  role?: CompanyMemberRole;
+  designation?: string | null;
+  is_active?: boolean;
+  invite_status?: string;
+  is_owner?: boolean;
+  company?: CompanyMembershipDetailsCompany;
+}
+
+export interface CompanyMembershipDetailsResponse {
+  user?: CompanyMembershipDetailsUser;
+  companies?: CompanyMembershipDetailsItem[];
+}
+
 export interface CompanyInvite {
   id: string;
-  company?: string;
-  email: string;
+  company?: string | number;
+  email?: string;
+  invite_email?: string;
   role?: CompanyMemberRole;
+  invite_status?: string;
   token?: string;
   is_active?: boolean;
   expires_at?: string;

@@ -6,6 +6,7 @@ export interface LoginPayload {
   device_name: string;
   device_id: string;
   role?: "candidate" | "recruiter" | "admin";
+  invite_token?: string;
 }
 
 export interface RegisterPayload {
@@ -24,6 +25,7 @@ export interface SignupPayload {
   phone: string;
   full_name: string;
   role: "candidate" | "recruiter";
+  invite_token?: string;
 }
 
 export interface OtpVerifyPayload {
