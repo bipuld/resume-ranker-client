@@ -60,6 +60,59 @@ export interface CompanyDetailResponse extends CompanyResponse {
   contact_person_email?: string;
   contact_person_phone?: string;
   contact_person_designation?: string;
+  approved_members?: CompanyApprovedMember[];
+}
+
+export interface CompanyApprovedMemberProfile {
+  id?: string | number;
+  profile_image?: string | null;
+  profile_image_url?: string | null;
+  bio?: string;
+  current_address?: string | null;
+  permanent_address?: string | null;
+  language?: string | null;
+  is_verified?: boolean;
+  user?: string | number;
+  [key: string]: unknown;
+}
+
+export interface CompanyApprovedMemberUser {
+  id?: string | number;
+  email?: string;
+  username?: string;
+  first_name?: string;
+  middle_name?: string;
+  last_name?: string;
+  phone?: string;
+  role?: string;
+  is_email_verified?: boolean;
+  is_phone_verified?: boolean;
+  is_verified?: boolean;
+  [key: string]: unknown;
+}
+
+export interface CompanyApprovedMember {
+  id: string | number;
+  user?: CompanyApprovedMemberUser | string | number;
+  user_profile?: CompanyApprovedMemberProfile | null;
+  user_profile_image?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  role?: CompanyMemberRole;
+  designation?: string | null;
+  invite_email?: string;
+  invite_status?: string;
+  is_active?: boolean;
+  is_approved?: boolean;
+  can_post_jobs?: boolean;
+  can_edit_jobs?: boolean;
+  can_delete_jobs?: boolean;
+  can_view_applicants?: boolean;
+  can_shortlist_candidates?: boolean;
+  can_manage_team?: boolean;
+  company?: string | number;
+  invited_by?: string | number | null;
+  [key: string]: unknown;
 }
 
 export interface CompanyListResponse {

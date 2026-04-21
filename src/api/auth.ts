@@ -1,4 +1,5 @@
 import API from "./axiox";
+import { resolveBackendUrl } from "../config/api";
 import type {
     ApiMessageResponse,
     AuthResponse,
@@ -20,7 +21,7 @@ const AUTH_ENDPOINTS = {
     changePassword: "user/password/change/",
 } as const;
 
-const VERIFY_OTP_URL = "http://localhost:8000/verify-otp/";
+const VERIFY_OTP_URL = resolveBackendUrl("verify-otp/");
 
 const postData = async <TResponse, TPayload>(url: string, payload: TPayload) => {
     const res = await API.post<TResponse>(url, payload);

@@ -1,5 +1,6 @@
 import axios from "axios";
 import { ROUTES } from "../routes/paths";
+import { getApiBaseUrl } from "../config/api";
 import {
   clearAuthSession,
   getAccessToken,
@@ -8,13 +9,12 @@ import {
   setSessionExpiredNotice,
 } from "../utils/authSession";
 
-const DEFAULT_BASE_URL = "http://localhost:8000/api/v1/";
 const REFRESH_ENDPOINTS = ["user/token/refresh/", "token/refresh/", "user/refresh/"];
 
 let refreshPromise: Promise<string | null> | null = null;
 
 const API = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || DEFAULT_BASE_URL,
+  baseURL: getApiBaseUrl(),
   timeout: 15000,
   headers: {
     "Content-Type": "application/json",

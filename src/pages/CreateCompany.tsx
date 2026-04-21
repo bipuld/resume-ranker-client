@@ -122,6 +122,7 @@ export default function CreateCompany() {
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   const [currentStep, setCurrentStep] = useState(1);
   const [companyId, setCompanyId] = useState<string | number | null>(null);
+  const [hasExistingCompany, setHasExistingCompany] = useState(false);
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState("");
   const [existingLogoUrl, setExistingLogoUrl] = useState("");
@@ -168,7 +169,11 @@ export default function CreateCompany() {
           return;
         }
 
-        navigate(ROUTES.recruiter.editCompany, { replace: true });
+        setHasExistingCompany(true);
+        setCompanyId(company.id ?? null);
+        setForm(mapCompanyToForm(company));
+        setExistingLogoUrl(typeof company.logo === "string" ? company.logo : "");
+        setCurrentStep(3);
       } catch {
         // Keep create flow available if status check is temporarily unavailable.
       }
@@ -200,6 +205,7 @@ export default function CreateCompany() {
         setCompanyId(company.id ?? null);
         setForm(mapCompanyToForm(company));
         setExistingLogoUrl(typeof company.logo === "string" ? company.logo : "");
+        setCurrentStep(3);
       } catch (err: unknown) {
         if (isMounted) {
           setError(getErrorMessage(err, "Could not load your company details for editing."));
@@ -250,16 +256,19 @@ export default function CreateCompany() {
         errors.email = "Invalid company email format";
       }
     } else if (step === 2) {
-      if (!form.address_line1.trim()) {
-        errors.address_line1 = "Address line 1 is required";
-      }
+      // In edit mode these location fields are locked, so do not block moving to contact step.
+      if (!isEditMode) {
+        if (!form.address_line1.trim()) {
+          errors.address_line1 = "Address line 1 is required";
+        }
 
-      if (!form.city.trim()) {
-        errors.city = "City is required";
-      }
+        if (!form.city.trim()) {
+          errors.city = "City is required";
+        }
 
-      if (!form.country) {
-        errors.country = "Country is required";
+        if (!form.country) {
+          errors.country = "Country is required";
+        }
       }
     } else if (step === 3) {
       if (
@@ -339,6 +348,12 @@ export default function CreateCompany() {
     event.preventDefault();
     setError("");
 
+    // Prevent accidental submit from intermediate steps (e.g. Enter key on inputs).
+    if (currentStep < 3) {
+      handleNextStep();
+      return;
+    }
+
     if (!validateStep(3)) {
       return;
     }
@@ -371,26 +386,36 @@ export default function CreateCompany() {
         longitude: form.longitude ? parseFloat(form.longitude) : undefined,
       } as any;
 
-      if (isEditMode) {
-        if (!companyId) {
+      if (isEditMode || hasExistingCompany) {
+        const targetCompanyId = companyId;
+
+        if (!targetCompanyId) {
           throw new Error("Company record was not found for editing.");
         }
 
-        // Sensitive trust fields are locked for direct edits and require separate review workflows.
-        delete payload.name;
-        delete payload.email;
-        delete payload.location;
-        delete payload.address_line1;
-        delete payload.address_line2;
-        delete payload.city;
-        delete payload.state;
-        delete payload.country;
-        delete payload.postal_code;
-        delete payload.latitude;
-        delete payload.longitude;
+        if (isEditMode) {
+          // Sensitive trust fields are locked for direct edits and require separate review workflows.
+          delete payload.name;
+          delete payload.email;
+          delete payload.location;
+          delete payload.address_line1;
+          delete payload.address_line2;
+          delete payload.city;
+          delete payload.state;
+          delete payload.country;
+          delete payload.postal_code;
+          delete payload.latitude;
+          delete payload.longitude;
+        }
 
-        await patchCompany(companyId, payload);
-        navigate(ROUTES.dashboard.recruiter, { replace: true });
+        await patchCompany(targetCompanyId, payload);
+
+        if (isEditMode) {
+          navigate(ROUTES.dashboard.recruiter, { replace: true });
+        } else {
+          saveRecruiterCompanyStage("pending-approval");
+          navigate(ROUTES.recruiter.pendingApproval, { replace: true });
+        }
       } else {
         await createCompany(payload);
         saveRecruiterCompanyStage("pending-approval");

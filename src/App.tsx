@@ -135,9 +135,9 @@ function App() {
       <Route
         path={ROUTES.recruiter.createCompany}
         element={
-          <RequireRecruiterCompanyStage requiredStage="no-company">
+          <RequireRecruiterCompanyStages allowedStages={["no-company", "pending-approval"]}>
             <CreateCompany />
-          </RequireRecruiterCompanyStage>
+          </RequireRecruiterCompanyStages>
         }
       />
       <Route

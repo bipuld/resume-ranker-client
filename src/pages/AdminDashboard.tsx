@@ -42,51 +42,22 @@ import ThemeToggle from "../components/ThemeToggle";
 import {
   getAdminCompanies,
   getAdminCompany,
+  getCompanyMembers,
+  inviteCompanyMember,
   unverifyAdminCompany,
   verifyAdminCompany,
 } from "../api/company";
-import type { CompanyDetailResponse, CompanyListResponse } from "../types/company";
+import type {
+  CompanyApprovedMember,
+  CompanyDetailResponse,
+  CompanyListResponse,
+  CompanyMember,
+  CompanyMemberRole,
+} from "../types/company";
 import { ROUTES } from "../routes/paths";
+import { resolveBackendUrl } from "../config/api";
 import { clearAuthSession, getAuthRole } from "../utils/authSession";
 import "./AdminDashboard.css";
-
-type RecruiterStatus = "Invited" | "Active" | "Paused";
-
-type Recruiter = {
-  id: string;
-  fullName: string;
-  email: string;
-  team: string;
-  status: RecruiterStatus;
-  createdAt: string;
-};
-
-const seedRecruiters: Recruiter[] = [
-  {
-    id: "REC-001",
-    fullName: "Anita Sharma",
-    email: "anita.sharma@apexats.com",
-    team: "Engineering",
-    status: "Active",
-    createdAt: "2026-04-12",
-  },
-  {
-    id: "REC-002",
-    fullName: "Rohan Singh",
-    email: "rohan.singh@apexats.com",
-    team: "Sales",
-    status: "Invited",
-    createdAt: "2026-04-15",
-  },
-  {
-    id: "REC-003",
-    fullName: "Mina Gurung",
-    email: "mina.gurung@apexats.com",
-    team: "Operations",
-    status: "Paused",
-    createdAt: "2026-04-17",
-  },
-];
 
 const pipelineSummary = [
   { label: "Open Roles", value: 18, trend: "+3 this week" },
@@ -119,7 +90,6 @@ const recruiterOutput = [
 ];
 
 const sourcePalette = ["#0f766e", "#15803d", "#b45309", "#2563eb"];
-const RECRUITER_STORAGE_KEY = "ats.admin.recruiters";
 const SECTION_IDS = [
   "overview",
   "erp-core",
@@ -235,6 +205,90 @@ const roleAccessMatrix = [
   { role: "Candidate", scope: "Own profile", actions: "Upload resume, apply, track status" },
 ];
 
+const pickFirstString = (...values: Array<unknown>) => {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return "";
+};
+
+const getApprovedMemberDetails = (member: CompanyApprovedMember | CompanyMember) => {
+  const memberRecord = member as Record<string, unknown>;
+  const userRecord =
+    typeof member.user === "object" && member.user !== null
+      ? (member.user as Record<string, unknown>)
+      : null;
+  const profileRecord =
+    typeof member.user_profile === "object" && member.user_profile !== null
+      ? (member.user_profile as Record<string, unknown>)
+      : null;
+
+  const fullName = [
+    pickFirstString(userRecord?.first_name, profileRecord?.first_name),
+    pickFirstString(userRecord?.middle_name, profileRecord?.middle_name),
+    pickFirstString(userRecord?.last_name, profileRecord?.last_name),
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const email = pickFirstString(
+    member.invite_email,
+    userRecord?.email,
+    memberRecord.email,
+    profileRecord?.email,
+  );
+
+  const phone = pickFirstString(
+    userRecord?.phone,
+    memberRecord.phone,
+    memberRecord.phone_number,
+    profileRecord?.phone,
+    profileRecord?.phone_number,
+    profileRecord?.mobile,
+  );
+
+  const address = pickFirstString(
+    profileRecord?.current_address,
+    profileRecord?.permanent_address,
+    memberRecord.address,
+    memberRecord.location,
+  );
+
+  const profileImage = pickFirstString(
+    memberRecord.user_profile_image,
+    memberRecord.profile_image,
+    memberRecord.profile_image_url,
+    profileRecord?.profile_image,
+    profileRecord?.profile_image_url,
+  );
+
+  const displayName = fullName || email || "Member";
+  const roleLabel = typeof member.role === "string" ? member.role.replace(/_/g, " ") : "member";
+  const designation = pickFirstString(member.designation, memberRecord.designation);
+  const statusLabel =
+    member.is_approved === true
+      ? "Approved"
+      : member.invite_status
+        ? `${member.invite_status}`.replace(/_/g, " ")
+        : "Pending";
+
+  return {
+    displayName,
+    email: email || "Not provided",
+    phone: phone || "Not provided",
+    address: address || "Not provided",
+    role: roleLabel,
+    designation: designation || "Not provided",
+    profileImage,
+    createdAt: pickFirstString(member.created_at, memberRecord.created_at),
+    isApproved: member.is_approved === true,
+    statusLabel,
+  };
+};
+
 type WeatherState = {
   location: string;
   temperature: number;
@@ -272,31 +326,13 @@ const getWeatherCondition = (code: number) => {
 export default function AdminDashboard() {
   const navigate = useNavigate();
   const [activeSection, setActiveSection] = useState("overview");
-  const [recruiters, setRecruiters] = useState<Recruiter[]>(() => {
-    try {
-      const raw = localStorage.getItem(RECRUITER_STORAGE_KEY);
-      if (!raw) {
-        return seedRecruiters;
-      }
-
-      const parsed = JSON.parse(raw) as Recruiter[];
-      if (!Array.isArray(parsed) || parsed.length === 0) {
-        return seedRecruiters;
-      }
-
-      return parsed;
-    } catch {
-      return seedRecruiters;
-    }
-  });
-  const [query, setQuery] = useState("");
   const [notice, setNotice] = useState("");
   const [form, setForm] = useState({
-    fullName: "",
+    companyId: "",
     email: "",
-    team: "Engineering",
-    status: "Invited" as RecruiterStatus,
+    role: "recruiter" as CompanyMemberRole,
   });
+  const [inviteLoading, setInviteLoading] = useState(false);
   const [weather, setWeather] = useState<WeatherState | null>(null);
   const [weatherStatus, setWeatherStatus] = useState<"loading" | "ready" | "error">("loading");
   const [weatherError, setWeatherError] = useState("");
@@ -308,6 +344,9 @@ export default function AdminDashboard() {
   const [companiesLoading, setCompaniesLoading] = useState(false);
   const [companiesError, setCompaniesError] = useState("");
   const [selectedCompany, setSelectedCompany] = useState<CompanyDetailResponse | null>(null);
+  const [selectedCompanyMembers, setSelectedCompanyMembers] = useState<Array<CompanyApprovedMember | CompanyMember>>([]);
+  const [selectedCompanyMembersLoading, setSelectedCompanyMembersLoading] = useState(false);
+  const [selectedCompanyMembersError, setSelectedCompanyMembersError] = useState("");
   const [activeCompanyActionId, setActiveCompanyActionId] = useState<string | number | null>(null);
   const [aiControls, setAiControls] = useState({
     autoScoring: true,
@@ -349,6 +388,28 @@ export default function AdminDashboard() {
     return `${company.latitude.toFixed(6)}, ${company.longitude.toFixed(6)}`;
   };
 
+  const approvedMembers = useMemo(() => {
+    return Array.isArray(selectedCompany?.approved_members) ? selectedCompany.approved_members : [];
+  }, [selectedCompany?.approved_members]);
+
+  const companyMembersForAdmin = useMemo(() => {
+    return selectedCompanyMembers.length > 0 ? selectedCompanyMembers : approvedMembers;
+  }, [selectedCompanyMembers, approvedMembers]);
+
+  const activeRecruiterCount = useMemo(() => {
+    return companies.reduce((total, company) => {
+      const members = Array.isArray(company.approved_members) ? company.approved_members : [];
+      const activeCount = members.filter((member) => member.is_active === true).length;
+      return total + activeCount;
+    }, 0);
+  }, [companies]);
+
+  const availableCompanies = useMemo(() => {
+    return [...companies]
+      .filter((company) => company.id)
+      .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  }, [companies]);
+
   const resolveLogoUrl = (logo?: string | null) => {
     if (!logo) {
       return "";
@@ -358,8 +419,32 @@ export default function AdminDashboard() {
       return logo;
     }
 
-    const apiBase = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api/v1/").replace(/\/?api\/v1\/?$/, "");
-    return `${apiBase}${logo.startsWith("/") ? "" : "/"}${logo}`;
+    return resolveBackendUrl(logo);
+  };
+
+  const resolveProfileImageUrl = (image?: string | null) => {
+    if (!image) {
+      return "";
+    }
+
+    if (/^https?:\/\//i.test(image)) {
+      return image;
+    }
+
+    return resolveBackendUrl(image);
+  };
+
+  const formatCreatedDate = (value?: string) => {
+    if (!value) {
+      return "Not provided";
+    }
+
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return "Not provided";
+    }
+
+    return date.toLocaleDateString();
   };
 
   const normalizeCompanyList = (
@@ -375,6 +460,31 @@ export default function AdminDashboard() {
 
     return [];
   };
+
+  const loadMembersForSelectedCompany = useCallback(
+    async (company: CompanyDetailResponse) => {
+      const fallbackMembers = Array.isArray(company.approved_members) ? company.approved_members : [];
+      if (!company.id) {
+        setSelectedCompanyMembers(fallbackMembers);
+        setSelectedCompanyMembersError("");
+        return;
+      }
+
+      setSelectedCompanyMembersLoading(true);
+      setSelectedCompanyMembersError("");
+
+      try {
+        const members = await getCompanyMembers(company.id);
+        setSelectedCompanyMembers(members);
+      } catch {
+        setSelectedCompanyMembers(fallbackMembers);
+        setSelectedCompanyMembersError("Showing approved members only. Full member list is currently unavailable.");
+      } finally {
+        setSelectedCompanyMembersLoading(false);
+      }
+    },
+    [],
+  );
 
   const loadCompanies = useCallback(
     async (filter: CompanyFilter = companyFilter) => {
@@ -409,16 +519,19 @@ export default function AdminDashboard() {
   const handleViewCompany = useCallback(async (id: string | number) => {
     setActiveCompanyActionId(id);
     setCompaniesError("");
+    setSelectedCompanyMembers([]);
+    setSelectedCompanyMembersError("");
 
     try {
       const company = await getAdminCompany(id);
       setSelectedCompany(company);
+      await loadMembersForSelectedCompany(company);
     } catch (err: unknown) {
       setCompaniesError(getErrorMessage(err, "Could not load company details."));
     } finally {
       setActiveCompanyActionId(null);
     }
-  }, []);
+  }, [loadMembersForSelectedCompany]);
 
   const applyCompanyVerificationAction = useCallback(
     async (
@@ -447,6 +560,7 @@ export default function AdminDashboard() {
         if (selectedCompany?.id === id) {
           const refreshed = await getAdminCompany(id);
           setSelectedCompany(refreshed);
+          await loadMembersForSelectedCompany(refreshed);
         }
       } catch (err: unknown) {
         setCompaniesError(getErrorMessage(err, "Could not update company verification status."));
@@ -454,28 +568,8 @@ export default function AdminDashboard() {
         setActiveCompanyActionId(null);
       }
     },
-    [companies, loadCompanies, selectedCompany?.id],
+    [companies, loadCompanies, loadMembersForSelectedCompany, selectedCompany?.id],
   );
-
-  const filteredRecruiters = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) {
-      return recruiters;
-    }
-
-    return recruiters.filter((item) => {
-      return (
-        item.fullName.toLowerCase().includes(normalized) ||
-        item.email.toLowerCase().includes(normalized) ||
-        item.team.toLowerCase().includes(normalized) ||
-        item.status.toLowerCase().includes(normalized)
-      );
-    });
-  }, [query, recruiters]);
-
-  useEffect(() => {
-    localStorage.setItem(RECRUITER_STORAGE_KEY, JSON.stringify(recruiters));
-  }, [recruiters]);
 
   useEffect(() => {
     void loadCompanies(companyFilter);
@@ -662,42 +756,49 @@ export default function AdminDashboard() {
     return () => window.clearInterval(timer);
   }, [lastCoordinates, loadWeatherForCoordinates, weather?.location]);
 
-  const handleCreateRecruiter = (event: FormEvent<HTMLFormElement>) => {
+  const handleCreateRecruiter = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setNotice("");
 
-    const fullName = form.fullName.trim();
     const email = form.email.trim().toLowerCase();
+    const companyId = form.companyId.trim();
+    const role = form.role;
 
-    if (!fullName || !email) {
-      setNotice("Recruiter name and email are required.");
+    if (!companyId) {
+      setNotice("Please select a company first.");
       return;
     }
 
-    const exists = recruiters.some((item) => item.email.toLowerCase() === email);
-    if (exists) {
-      setNotice("A recruiter with this email already exists.");
+    if (!email) {
+      setNotice("Work email is required.");
       return;
     }
 
-    const nextId = `REC-${String(recruiters.length + 1).padStart(3, "0")}`;
-    const nextRecruiter: Recruiter = {
-      id: nextId,
-      fullName,
-      email,
-      team: form.team,
-      status: form.status,
-      createdAt: new Date().toISOString().slice(0, 10),
-    };
+    setInviteLoading(true);
 
-    setRecruiters((prev) => [nextRecruiter, ...prev]);
-    setForm({
-      fullName: "",
-      email: "",
-      team: form.team,
-      status: "Invited",
-    });
-    setNotice(`Recruiter ${fullName} created successfully.`);
+    try {
+      await inviteCompanyMember(companyId, {
+        email,
+        role,
+      });
+
+      if (selectedCompany?.id && `${selectedCompany.id}` === companyId) {
+        const refreshed = await getAdminCompany(companyId);
+        setSelectedCompany(refreshed);
+        await loadMembersForSelectedCompany(refreshed);
+      }
+
+      setForm((prev) => ({
+        ...prev,
+        email: "",
+        role: "recruiter",
+      }));
+      setNotice(`Invitation sent to ${email}.`);
+    } catch (err: unknown) {
+      setNotice(getErrorMessage(err, "Could not send invitation right now."));
+    } finally {
+      setInviteLoading(false);
+    }
   };
 
   const handleLogout = () => {
@@ -715,45 +816,6 @@ export default function AdminDashboard() {
 
     section.scrollIntoView({ behavior: "smooth", block: "start" });
     window.history.replaceState(null, "", `#${sectionId}`);
-  };
-
-  const handleExportRecruiters = () => {
-    if (filteredRecruiters.length === 0) {
-      setNotice("No recruiter records available for export.");
-      return;
-    }
-
-    const headers = ["id", "fullName", "email", "team", "status", "createdAt"];
-    const rows = filteredRecruiters.map((item) => [
-      item.id,
-      item.fullName,
-      item.email,
-      item.team,
-      item.status,
-      item.createdAt,
-    ]);
-
-    const csv = [headers, ...rows]
-      .map((row) =>
-        row
-          .map((cell) => {
-            const safe = String(cell).replace(/"/g, '""');
-            return `"${safe}"`;
-          })
-          .join(","),
-      )
-      .join("\n");
-
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `recruiters-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    setNotice("Recruiter data exported successfully.");
   };
 
   const toggleAiControl = (key: "autoScoring" | "strictFileValidation" | "anomalyAlerts") => {
@@ -924,7 +986,7 @@ export default function AdminDashboard() {
               <Users size={18} />
               <div>
                 <p>Active Recruiters</p>
-                <strong>{recruiters.filter((item) => item.status === "Active").length}</strong>
+                <strong>{activeRecruiterCount}</strong>
               </div>
             </article>
             <article>
@@ -1171,20 +1233,25 @@ export default function AdminDashboard() {
           <section className="panel-grid grid gap-4 xl:grid-cols-2">
             <article className="panel tab-anchor rounded-2xl border border-white/10 bg-white/5 p-5 shadow-lg backdrop-blur-xl" id="recruiter-management">
               <div className="panel-header">
-                <h3>Create Recruiter</h3>
-                <span>Invite and assign hiring ownership</span>
+                <h3>Invite Recruiter</h3>
+                <span>Select company and role, then send invitation email</span>
               </div>
 
               <form className="recruiter-form" onSubmit={handleCreateRecruiter}>
-                <label htmlFor="recruiter-fullName">Full Name</label>
-                <input
-                  id="recruiter-fullName"
-                  type="text"
-                  value={form.fullName}
-                  onChange={(event) => setForm((prev) => ({ ...prev, fullName: event.target.value }))}
-                  placeholder="Aarav Basnet"
+                <label htmlFor="recruiter-company">Company Name</label>
+                <select
+                  id="recruiter-company"
+                  value={form.companyId}
+                  onChange={(event) => setForm((prev) => ({ ...prev, companyId: event.target.value }))}
                   required
-                />
+                >
+                  <option value="">Select company</option>
+                  {availableCompanies.map((company) => (
+                    <option key={String(company.id)} value={String(company.id)}>
+                      {company.name || `Company ${company.id}`}
+                    </option>
+                  ))}
+                </select>
 
                 <label htmlFor="recruiter-email">Work Email</label>
                 <input
@@ -1196,39 +1263,26 @@ export default function AdminDashboard() {
                   required
                 />
 
-                <div className="form-two">
-                  <div>
-                    <label htmlFor="recruiter-team">Team</label>
-                    <select
-                      id="recruiter-team"
-                      value={form.team}
-                      onChange={(event) => setForm((prev) => ({ ...prev, team: event.target.value }))}
-                    >
-                      <option>Engineering</option>
-                      <option>Sales</option>
-                      <option>Operations</option>
-                      <option>Design</option>
-                      <option>Finance</option>
-                    </select>
-                  </div>
+                <label htmlFor="recruiter-role">Role Name</label>
+                <select
+                  id="recruiter-role"
+                  value={form.role}
+                  onChange={(event) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      role: event.target.value as CompanyMemberRole,
+                    }))
+                  }
+                >
+                  <option value="admin">Admin</option>
+                  <option value="hr">HR</option>
+                  <option value="recruiter">Recruiter</option>
+                  <option value="interviewer">Interviewer</option>
+                </select>
 
-                  <div>
-                    <label htmlFor="recruiter-status">Status</label>
-                    <select
-                      id="recruiter-status"
-                      value={form.status}
-                      onChange={(event) =>
-                        setForm((prev) => ({ ...prev, status: event.target.value as RecruiterStatus }))
-                      }
-                    >
-                      <option value="Invited">Invited</option>
-                      <option value="Active">Active</option>
-                      <option value="Paused">Paused</option>
-                    </select>
-                  </div>
-                </div>
-
-                <button type="submit">Create Recruiter</button>
+                <button type="submit" disabled={inviteLoading || availableCompanies.length === 0}>
+                  {inviteLoading ? "Sending Invitation..." : "Send Invitation"}
+                </button>
               </form>
 
               {notice && <p className="inline-notice">{notice}</p>}
@@ -1263,62 +1317,6 @@ export default function AdminDashboard() {
                 </article>
               </div>
             </article>
-          </section>
-
-          <section className="panel rounded-2xl border border-white/10 bg-white/5 p-5 shadow-lg backdrop-blur-xl" aria-label="Recruiter directory">
-            <div className="panel-header stack-mobile">
-              <div>
-                <h3>Recruiter Directory</h3>
-                <span>Search, review, and monitor recruiter status</span>
-              </div>
-              <div className="directory-actions">
-                <input
-                  type="search"
-                  placeholder="Search recruiter, team, status"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  aria-label="Search recruiters"
-                />
-                <button type="button" className="secondary-action export-action-btn" onClick={handleExportRecruiters}>
-                  Export CSV
-                </button>
-              </div>
-            </div>
-
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>ID</th>
-                    <th>Name</th>
-                    <th>Email</th>
-                    <th>Team</th>
-                    <th>Status</th>
-                    <th>Created</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredRecruiters.length > 0 ? (
-                    filteredRecruiters.map((item) => (
-                      <tr key={item.id}>
-                        <td>{item.id}</td>
-                        <td>{item.fullName}</td>
-                        <td>{item.email}</td>
-                        <td>{item.team}</td>
-                        <td>
-                          <span className={`status-pill status-${item.status.toLowerCase()}`}>{item.status}</span>
-                        </td>
-                        <td>{item.createdAt}</td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={6} className="table-empty-state">No recruiters found for current search.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
           </section>
 
           <section className="panel tab-anchor company-verification-panel rounded-2xl border border-white/10 bg-white/5 p-5 shadow-lg backdrop-blur-xl" id="company-verification" aria-label="Company verification management">
@@ -1554,6 +1552,74 @@ export default function AdminDashboard() {
                         <strong>{toDisplay([selectedCompany.city, selectedCompany.country].filter(Boolean).join(", "))}</strong>
                       </article>
                     </div>
+                  </section>
+
+                  <section className="company-detail-section company-members-section">
+                    <h4>Recruiter Details</h4>
+
+                    {selectedCompanyMembersError && <p className="inline-notice company-error">{selectedCompanyMembersError}</p>}
+
+                    {selectedCompanyMembersLoading ? (
+                      <article className="company-detail-wide">
+                        <p>Recruiter Details</p>
+                        <strong>Loading member list...</strong>
+                      </article>
+                    ) : companyMembersForAdmin.length > 0 ? (
+                      <div className="table-wrap company-members-table-wrap">
+                        <table className="company-members-table">
+                          <thead>
+                            <tr>
+                              <th>Profile</th>
+                              <th>Name</th>
+                              <th>Email</th>
+                              <th>Role</th>
+                              <th>Status</th>
+                              <th>Company</th>
+                              <th>Created</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {companyMembersForAdmin.map((member) => {
+                              const details = getApprovedMemberDetails(member);
+                              const profileImageUrl = resolveProfileImageUrl(details.profileImage);
+
+                              return (
+                                <tr key={member.id}>
+                                  <td>
+                                    {profileImageUrl ? (
+                                      <img
+                                        src={profileImageUrl}
+                                        alt={details.displayName}
+                                        className="member-profile-thumb"
+                                      />
+                                    ) : (
+                                      <div className="member-profile-fallback" title={details.displayName}>
+                                        <CircleUserRound size={14} />
+                                      </div>
+                                    )}
+                                  </td>
+                                  <td>{toDisplay(details.displayName)}</td>
+                                  <td>{toDisplay(details.email)}</td>
+                                  <td>{toDisplay(details.role)}</td>
+                                  <td>
+                                    <span className={`status-pill ${details.isApproved ? "status-active" : "status-paused"}`}>
+                                      {toDisplay(details.statusLabel)}
+                                    </span>
+                                  </td>
+                                  <td>{toDisplay(selectedCompany.name)}</td>
+                                  <td>{formatCreatedDate(details.createdAt)}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <article className="company-detail-wide">
+                        <p>Recruiter Details</p>
+                        <strong>No approved members in this company yet.</strong>
+                      </article>
+                    )}
                   </section>
                 </div>
               </div>

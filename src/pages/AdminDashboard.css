@@ -1220,6 +1220,35 @@
   color: var(--admin-text);
 }
 
+.company-members-table-wrap {
+  margin-top: 0.3rem;
+}
+
+.company-members-table {
+  min-width: 760px;
+}
+
+.member-profile-thumb,
+.member-profile-fallback {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--admin-line) 84%, #ffffff 16%);
+}
+
+.member-profile-thumb {
+  object-fit: cover;
+  display: block;
+}
+
+.member-profile-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--admin-accent) 10%, #ffffff 90%);
+  color: var(--admin-accent);
+}
+
 .company-error {
   color: var(--admin-danger);
 }
@@ -1258,6 +1287,11 @@
 :root[data-theme="dark"] .company-detail-wide {
   border-color: rgba(148, 163, 184, 0.22);
   background: linear-gradient(160deg, rgba(15, 23, 42, 0.76), rgba(30, 41, 59, 0.64));
+}
+
+:root[data-theme="dark"] .member-profile-thumb,
+:root[data-theme="dark"] .member-profile-fallback {
+  border-color: rgba(148, 163, 184, 0.3);
 }
 
 :root[data-theme="dark"] .company-verification-panel .secondary-action {

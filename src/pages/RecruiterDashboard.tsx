@@ -5,8 +5,11 @@ import {
   BarChart3,
   Clock,
   AtSign,
+  Mail,
+  MapPin,
   LogOut,
   MessageSquare,
+  Phone,
   Plus,
   RefreshCw,
   Settings,
@@ -25,6 +28,7 @@ import {
 } from "../api/company";
 import { getRecruiterNotifications } from "../api/notifications";
 import { getProfile } from "../api/profile";
+import { resolveBackendUrl } from "../config/api";
 import { ROUTES } from "../routes/paths";
 import { clearAuthSession } from "../utils/authSession";
 import ThemeToggle from "../components/ThemeToggle";
@@ -86,6 +90,171 @@ const roleTitleByCode: Record<CompanyMemberRole, string> = {
 };
 
 const normalizeEmail = (value?: string) => (value || "").trim().toLowerCase();
+
+const pickFirstString = (...values: Array<unknown>) => {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return "";
+};
+
+const resolveMediaUrl = (value: unknown) => {
+  if (typeof value !== "string" || !value.trim()) {
+    return "";
+  }
+
+  const mediaPath = value.trim();
+  if (/^https?:\/\//i.test(mediaPath) || mediaPath.startsWith("data:")) {
+    return mediaPath;
+  }
+
+  return resolveBackendUrl(mediaPath);
+};
+
+const buildAvatarFallbackUrl = (seed: string) => {
+  const normalizedSeed = seed.trim() || "member";
+  return `https://api.dicebear.com/9.x/initials/svg?seed=${encodeURIComponent(normalizedSeed)}&backgroundType=gradientLinear`;
+};
+
+const getMemberContactDetails = (member: CompanyMember) => {
+  const memberRecord = member as Record<string, unknown>;
+  const userRecord =
+    typeof member.user === "object" && member.user !== null
+      ? (member.user as Record<string, unknown>)
+      : null;
+  const userProfileRecord =
+    typeof memberRecord.user_profile === "object" && memberRecord.user_profile !== null
+      ? (memberRecord.user_profile as Record<string, unknown>)
+      : null;
+  const profileUserRecord =
+    typeof userProfileRecord?.user === "object" && userProfileRecord.user !== null
+      ? (userProfileRecord.user as Record<string, unknown>)
+      : null;
+
+  const email = pickFirstString(
+    member.invite_email,
+    member.email,
+    memberRecord.contact_email,
+    userRecord?.email,
+    profileUserRecord?.email,
+  );
+  const phone = pickFirstString(
+    memberRecord.phone,
+    memberRecord.phone_number,
+    memberRecord.contact_phone,
+    memberRecord.mobile,
+    userProfileRecord?.phone,
+    userProfileRecord?.phone_number,
+    userProfileRecord?.mobile,
+    userRecord?.phone,
+    userRecord?.phone_number,
+    userRecord?.mobile,
+    profileUserRecord?.phone,
+    profileUserRecord?.phone_number,
+    profileUserRecord?.mobile,
+  );
+
+  const addressFromParts = [
+    pickFirstString(memberRecord.address_line1, userRecord?.address_line1),
+    pickFirstString(memberRecord.address_line2, userRecord?.address_line2),
+    pickFirstString(memberRecord.city, userRecord?.city),
+    pickFirstString(memberRecord.state, userRecord?.state),
+    pickFirstString(memberRecord.country, userRecord?.country),
+    pickFirstString(memberRecord.postal_code, userRecord?.postal_code),
+  ]
+    .filter(Boolean)
+    .join(", ");
+
+  const address =
+    pickFirstString(
+      memberRecord.address,
+      memberRecord.location,
+      userRecord?.address,
+      userRecord?.location,
+      userProfileRecord?.current_address,
+      userProfileRecord?.permanent_address,
+      userProfileRecord?.address,
+      userProfileRecord?.location,
+    ) ||
+    addressFromParts;
+
+  const imageUrl = resolveMediaUrl(
+    pickFirstString(
+      memberRecord.profile_image,
+      memberRecord.profileImage,
+      memberRecord.profile_image_url,
+      memberRecord.profile_photo,
+      memberRecord.avatar,
+      memberRecord.avatar_url,
+      memberRecord.image,
+      memberRecord.image_url,
+      memberRecord.photo,
+      memberRecord.photo_url,
+      userProfileRecord?.profile_image,
+      userProfileRecord?.profileImage,
+      userProfileRecord?.profile_image_url,
+      userProfileRecord?.profile_photo,
+      userProfileRecord?.avatar,
+      userProfileRecord?.avatar_url,
+      userProfileRecord?.image,
+      userProfileRecord?.image_url,
+      userProfileRecord?.photo,
+      userProfileRecord?.photo_url,
+      userRecord?.profile_image,
+      userRecord?.profileImage,
+      userRecord?.profile_image_url,
+      userRecord?.profile_photo,
+      userRecord?.avatar,
+      userRecord?.avatar_url,
+      userRecord?.image,
+      userRecord?.image_url,
+      userRecord?.photo,
+      userRecord?.photo_url,
+      profileUserRecord?.profile_image,
+      profileUserRecord?.profileImage,
+      profileUserRecord?.profile_image_url,
+      profileUserRecord?.profile_photo,
+      profileUserRecord?.avatar,
+      profileUserRecord?.avatar_url,
+      profileUserRecord?.image,
+      profileUserRecord?.image_url,
+      profileUserRecord?.photo,
+      profileUserRecord?.photo_url,
+    ),
+  );
+
+  const fullNameFromUser = [
+    pickFirstString(profileUserRecord?.first_name, userRecord?.first_name),
+    pickFirstString(profileUserRecord?.middle_name, userRecord?.middle_name),
+    pickFirstString(profileUserRecord?.last_name, userRecord?.last_name),
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const displayName = pickFirstString(
+    memberRecord.full_name,
+    memberRecord.name,
+    userProfileRecord?.full_name,
+    fullNameFromUser,
+    userRecord?.full_name,
+    userRecord?.name,
+    profileUserRecord?.full_name,
+    profileUserRecord?.name,
+    email,
+    "Member",
+  );
+
+  return {
+    displayName,
+    email: email || "Not provided",
+    phone: phone || "Not provided",
+    address: address || "Not provided",
+    imageUrl: imageUrl || buildAvatarFallbackUrl(displayName || email || "member"),
+  };
+};
 
 const getMemberCompanyId = (member: CompanyMember) => {
   const value = member.company;
@@ -337,8 +506,7 @@ export default function RecruiterDashboard() {
       const profileImage = (() => {
         if (!profile.profile_image) return "";
         if (/^https?:\/\//i.test(profile.profile_image)) return profile.profile_image;
-        const apiBase = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api/v1/").replace(/\/?api\/v1\/?$/, "");
-        return `${apiBase}${profile.profile_image.startsWith("/") ? "" : "/"}${profile.profile_image}`;
+        return resolveBackendUrl(profile.profile_image);
       })();
 
       setIdentity({
@@ -952,6 +1120,7 @@ export default function RecruiterDashboard() {
                   const canEdit = isCompanyOwner && Boolean(member.is_approved) && !isOwner;
                   const canViewPermissions = isCompanyOwner;
                   const memberId = `${member.id}`;
+                  const contactDetails = getMemberContactDetails(member);
                   const memberLayoutClass = canViewPermissions
                     ? "grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)_auto] lg:items-start"
                     : "grid gap-4 lg:grid-cols-[220px_auto] lg:items-start";
@@ -961,13 +1130,26 @@ export default function RecruiterDashboard() {
                       className="rounded-2xl border border-slate-200 bg-white/90 p-4 dark:border-slate-700 dark:bg-slate-900/60"
                     >
                       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                            {member.invite_email || member.email || "Member"}
-                          </p>
-                          <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Member status: {member.is_approved ? "Approved" : "Pending approval"}
-                          </p>
+                        <div className="flex items-center gap-3">
+                          {contactDetails.imageUrl ? (
+                            <img
+                              src={contactDetails.imageUrl}
+                              alt={contactDetails.displayName}
+                              className="h-12 w-12 rounded-xl border border-slate-200 object-cover shadow-sm dark:border-slate-700"
+                            />
+                          ) : (
+                            <div className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-cyan-100 text-cyan-700 dark:bg-cyan-500/20 dark:text-cyan-300">
+                              <UserCircle2 size={22} />
+                            </div>
+                          )}
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                              {contactDetails.displayName}
+                            </p>
+                            <p className="text-xs text-slate-600 dark:text-slate-400">
+                              {roleTitleByCode[member.role] || "Member"}
+                            </p>
+                          </div>
                         </div>
                         <div className="flex items-center gap-2">
                           {isOwner && (
@@ -975,11 +1157,21 @@ export default function RecruiterDashboard() {
                               <ShieldCheck size={12} /> Owner
                             </span>
                           )}
-                          {!member.is_approved && (
-                            <span className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
-                              Waiting for approval
-                            </span>
-                          )}
+                        </div>
+                      </div>
+
+                      <div className="mb-4 grid gap-2 rounded-2xl border border-slate-200 bg-slate-50/80 p-3 sm:grid-cols-3 dark:border-slate-700 dark:bg-slate-800/60">
+                        <div className="flex items-center gap-2 rounded-xl bg-white/90 px-3 py-2 text-xs text-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
+                          <Mail size={14} className="text-cyan-600 dark:text-cyan-300" />
+                          <span className="truncate">{contactDetails.email}</span>
+                        </div>
+                        <div className="flex items-center gap-2 rounded-xl bg-white/90 px-3 py-2 text-xs text-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
+                          <Phone size={14} className="text-cyan-600 dark:text-cyan-300" />
+                          <span className="truncate">{contactDetails.phone}</span>
+                        </div>
+                        <div className="flex items-center gap-2 rounded-xl bg-white/90 px-3 py-2 text-xs text-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
+                          <MapPin size={14} className="text-cyan-600 dark:text-cyan-300" />
+                          <span className="truncate">{contactDetails.address}</span>
                         </div>
                       </div>
 
@@ -1081,31 +1273,58 @@ export default function RecruiterDashboard() {
                 <p className="text-sm text-slate-600 dark:text-slate-400">No pending member approvals.</p>
               ) : (
                 <div className="space-y-3">
-                  {pendingApprovalMembers.map((member) => (
-                    <article
-                      key={`pending-${member.id}`}
-                      className="rounded-xl border border-amber-300/50 bg-amber-50/60 px-4 py-3 dark:border-amber-500/30 dark:bg-amber-500/10"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                            {member.invite_email || member.email || "Pending member"}
-                          </p>
-                          <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Member status: Pending approval
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2">
+                  {pendingApprovalMembers.map((member) => {
+                    const contactDetails = getMemberContactDetails(member);
+
+                    return (
+                      <article
+                        key={`pending-${member.id}`}
+                        className="rounded-xl border border-amber-300/50 bg-amber-50/60 px-4 py-3 dark:border-amber-500/30 dark:bg-amber-500/10"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-3">
+                            {contactDetails.imageUrl ? (
+                              <img
+                                src={contactDetails.imageUrl}
+                                alt={contactDetails.displayName}
+                                className="h-10 w-10 rounded-xl border border-amber-200 object-cover dark:border-amber-500/30"
+                              />
+                            ) : (
+                              <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">
+                                <UserCircle2 size={20} />
+                              </div>
+                            )}
+                            <div>
+                              <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                                {contactDetails.displayName}
+                              </p>
+                              <p className="text-xs text-slate-600 dark:text-slate-300">
+                                {roleTitleByCode[member.role] || "Member"}
+                              </p>
+                            </div>
+                          </div>
                           <span className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
                             Waiting for approval
                           </span>
-                          <span className="rounded-full border border-cyan-300 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-800 dark:border-cyan-500/40 dark:bg-cyan-500/10 dark:text-cyan-300">
-                            {roleTitleByCode[member.role] || "Member"}
-                          </span>
                         </div>
-                      </div>
-                    </article>
-                  ))}
+
+                        <div className="mt-3 grid gap-2 rounded-xl border border-amber-200/70 bg-white/70 p-2 sm:grid-cols-3 dark:border-amber-500/20 dark:bg-slate-900/30">
+                          <div className="flex items-center gap-2 rounded-lg bg-white/90 px-2.5 py-2 text-xs text-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
+                            <Mail size={13} className="text-amber-600 dark:text-amber-300" />
+                            <span className="truncate">{contactDetails.email}</span>
+                          </div>
+                          <div className="flex items-center gap-2 rounded-lg bg-white/90 px-2.5 py-2 text-xs text-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
+                            <Phone size={13} className="text-amber-600 dark:text-amber-300" />
+                            <span className="truncate">{contactDetails.phone}</span>
+                          </div>
+                          <div className="flex items-center gap-2 rounded-lg bg-white/90 px-2.5 py-2 text-xs text-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
+                            <MapPin size={13} className="text-amber-600 dark:text-amber-300" />
+                            <span className="truncate">{contactDetails.address}</span>
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  })}
                 </div>
               )}
             </div>
